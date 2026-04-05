@@ -52,6 +52,7 @@ export class Renderer {
   private uResolution: WebGLUniformLocation;
   private uColor: WebGLUniformLocation;
   private uOffset: WebGLUniformLocation;
+  private uZoom: WebGLUniformLocation;
 
   readonly width: number;
   readonly height: number;
@@ -71,17 +72,20 @@ export class Renderer {
     this.aPosition = gl.getAttribLocation(this.program, 'a_position');
 
     // Uniforms
-    const uRes = gl.getUniformLocation(this.program, 'u_resolution');
-    const uCol = gl.getUniformLocation(this.program, 'u_color');
-    const uOff = gl.getUniformLocation(this.program, 'u_offset');
-    if (!uRes || !uCol || !uOff) throw new Error('Missing shader uniforms');
+    const uRes  = gl.getUniformLocation(this.program, 'u_resolution');
+    const uCol  = gl.getUniformLocation(this.program, 'u_color');
+    const uOff  = gl.getUniformLocation(this.program, 'u_offset');
+    const uZoom = gl.getUniformLocation(this.program, 'u_zoom');
+    if (!uRes || !uCol || !uOff || !uZoom) throw new Error('Missing shader uniforms');
     this.uResolution = uRes;
     this.uColor = uCol;
     this.uOffset = uOff;
+    this.uZoom = uZoom;
 
     // Set resolution once (canvas size doesn't change for now)
     gl.uniform2f(this.uResolution, this.width, this.height);
     gl.uniform2f(this.uOffset, 0, 0);
+    gl.uniform1f(this.uZoom, 1.0);
 
     // Shared position buffer (reused every draw call)
     const buf = gl.createBuffer();
@@ -98,6 +102,11 @@ export class Renderer {
    */
   setOffset(x: number, y: number): void {
     this.gl.uniform2f(this.uOffset, x, y);
+  }
+
+  /** Set the zoom scale applied around the viewport centre. 1.0 = no zoom. */
+  setZoom(zoom: number): void {
+    this.gl.uniform1f(this.uZoom, zoom);
   }
 
   /** Clear the canvas to a solid color. */

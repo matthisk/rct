@@ -6,11 +6,15 @@ import { InputManager } from '../input/InputManager';
 
 // 128×128 matches a real RCT1 scenario map.  At 64×32 px per tile the grid
 // spans ~8 192 × 4 096 px — well beyond the 1280×720 viewport in every
-// direction.  The camera system will let the player scroll the full park.
+// direction.
 const WORLD_COLS = 128;
 const WORLD_ROWS = 128;
 
-/** Camera pan speed in screen pixels per second. */
+/**
+ * Camera pan speed in screen pixels per second.
+ * World-space delta = PAN_SPEED / zoom, keeping screen speed constant across
+ * all zoom levels.
+ */
 const PAN_SPEED = 500;
 
 const SKY: [number, number, number, number] = [0.53, 0.81, 0.98, 1.0];
@@ -22,13 +26,13 @@ const SKY: [number, number, number, number] = [0.53, 0.81, 0.98, 1.0];
  * simulation state, input, camera, and renderer.
  */
 export class Game {
-  private renderer: Renderer;
+  private renderer:    Renderer;
   private isoRenderer: IsoRenderer;
-  private world: World;
-  private camera: Camera;
-  private input: InputManager;
+  private world:       World;
+  private camera:      Camera;
+  private input:       InputManager;
 
-  private rafId: number = 0;
+  private rafId:    number = 0;
   private lastTime: number = 0;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -71,32 +75,37 @@ export class Game {
     const dt = Math.min((timestamp - this.lastTime) / 1000, 0.1); // cap at 100 ms
     this.lastTime = timestamp;
 
+    this.input.update();
     this.update(dt);
     this.render();
 
     this.rafId = requestAnimationFrame((t) => this.loop(t));
   }
 
-  /** Update simulation state. */
   private update(dt: number): void {
+    // Zoom (one-shot via wasPressed)
+    if (this.input.wasPressed('zoomIn'))  this.camera.zoomIn();
+    if (this.input.wasPressed('zoomOut')) this.camera.zoomOut();
+
+    // Pan — world-space delta keeps screen speed constant across zoom levels
+    const worldSpeed = PAN_SPEED / this.camera.zoom;
     let dx = 0, dy = 0;
-    if (this.input.isHeld('panLeft'))  dx -= PAN_SPEED * dt;
-    if (this.input.isHeld('panRight')) dx += PAN_SPEED * dt;
-    if (this.input.isHeld('panUp'))    dy -= PAN_SPEED * dt;
-    if (this.input.isHeld('panDown'))  dy += PAN_SPEED * dt;
+    if (this.input.isHeld('panLeft'))  dx -= worldSpeed * dt;
+    if (this.input.isHeld('panRight')) dx += worldSpeed * dt;
+    if (this.input.isHeld('panUp'))    dy -= worldSpeed * dt;
+    if (this.input.isHeld('panDown'))  dy += worldSpeed * dt;
     if (dx !== 0 || dy !== 0) this.camera.pan(dx, dy);
   }
 
-  /** Render the current frame. */
   private render(): void {
     this.renderer.clear(SKY);
 
-    // World pass — apply camera offset so the geometry (built in world space)
-    // scrolls with the camera.
+    // Apply camera transform — offset then zoom — before the world draw.
+    // Reset both to identity afterwards so future UI draws are unaffected.
     this.renderer.setOffset(this.camera.x, this.camera.y);
+    this.renderer.setZoom(this.camera.zoom);
     this.isoRenderer.render(this.world, this.renderer);
-
-    // Reset offset before any future UI draw calls.
     this.renderer.setOffset(0, 0);
+    this.renderer.setZoom(1.0);
   }
 }
