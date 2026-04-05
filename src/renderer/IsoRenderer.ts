@@ -2,6 +2,7 @@ import type { Color } from './Renderer';
 import { Renderer } from './Renderer';
 import { World } from '../world/World';
 import { TileType } from '../world/Tile';
+import { makeGrassCanvas } from './grassTexture';
 
 // ---------------------------------------------------------------------------
 // Tile geometry constants
@@ -22,8 +23,14 @@ const HH = TILE_H / 2; // 16
  */
 const INSET = 0.82;
 
-/** Floats written per tile per pass: 2 triangles × 3 vertices × 2 coords. */
-const FLOATS_PER_TILE = 12;
+/** Floats per tile in the border pass: 2 triangles × 3 vertices × 2 coords. */
+const BORDER_FLOATS_PER_TILE = 12;
+
+/**
+ * Floats per tile in the fill (textured) pass:
+ * 2 triangles × 3 vertices × 4 components (x, y, u, v).
+ */
+const FILL_FLOATS_PER_TILE = 24;
 
 // ---------------------------------------------------------------------------
 // Per-tile-type colour palette
@@ -51,6 +58,8 @@ const PALETTE: Record<TileType, TilePalette> = {
  *      W     E
  *       \   /
  *         S
+ *
+ * Writes 12 floats (x, y) per vertex — for the border (color-only) pass.
  */
 function writeDiamond(
   out: Float32Array,
@@ -73,6 +82,38 @@ function writeDiamond(
   out[offset++] = nx; out[offset++] = ny;
   out[offset++] = sx; out[offset++] = sy;
   out[offset++] = wx; out[offset++] = wy;
+
+  return offset;
+}
+
+/**
+ * Write two triangles forming a diamond with interleaved x, y, u, v data —
+ * for the textured fill pass.  Writes 24 floats (4 per vertex).
+ *
+ * UV corners: N=(0.5, 0), E=(1, 0.5), S=(0.5, 1), W=(0, 0.5).
+ * This maps the diamond shape exactly to the full [0,1]×[0,1] texture space.
+ */
+function writeFillDiamond(
+  out: Float32Array,
+  offset: number,
+  cx: number,
+  cy: number,
+  hw: number,
+  hh: number,
+): number {
+  const nx = cx,      ny = cy - hh;
+  const ex = cx + hw, ey = cy;
+  const sx = cx,      sy = cy + hh;
+  const wx = cx - hw, wy = cy;
+
+  // Triangle 1: N → E → S
+  out[offset++] = nx; out[offset++] = ny; out[offset++] = 0.5; out[offset++] = 0.0;
+  out[offset++] = ex; out[offset++] = ey; out[offset++] = 1.0; out[offset++] = 0.5;
+  out[offset++] = sx; out[offset++] = sy; out[offset++] = 0.5; out[offset++] = 1.0;
+  // Triangle 2: N → S → W
+  out[offset++] = nx; out[offset++] = ny; out[offset++] = 0.5; out[offset++] = 0.0;
+  out[offset++] = sx; out[offset++] = sy; out[offset++] = 0.5; out[offset++] = 1.0;
+  out[offset++] = wx; out[offset++] = wy; out[offset++] = 0.0; out[offset++] = 0.5;
 
   return offset;
 }
@@ -108,6 +149,9 @@ export class IsoRenderer {
   private borderVertexCount = 0;
   private fillVertexCount   = 0;
 
+  // Grass texture, created lazily on the first render() call.
+  private grassTexture: WebGLTexture | null = null;
+
   // When true the buffers are rebuilt before the next draw.
   private dirty = true;
 
@@ -138,9 +182,9 @@ export class IsoRenderer {
       this.originY = 40; // small top margin; camera scrolling will shift this
     }
 
-    const capacity = worldCols * worldRows * FLOATS_PER_TILE;
-    this.borderVerts = new Float32Array(capacity);
-    this.fillVerts   = new Float32Array(capacity);
+    const tileCount = worldCols * worldRows;
+    this.borderVerts = new Float32Array(tileCount * BORDER_FLOATS_PER_TILE);
+    this.fillVerts   = new Float32Array(tileCount * FILL_FLOATS_PER_TILE);
   }
 
   /**
@@ -172,18 +216,22 @@ export class IsoRenderer {
   /**
    * Render the entire world.
    *
-   * Geometry is rebuilt only when `dirty` (world changed).  Each pass is a
-   * single WebGL draw call per tile type (2 draw calls total for a grass-only
-   * world, regardless of grid size).
+   * Geometry is rebuilt only when `dirty` (world changed).
+   * Two draw calls total: border (solid color) + fill (textured).
    */
   render(world: World, renderer: Renderer): void {
+    // Create the grass texture on first use (requires a live Renderer/GL context).
+    if (!this.grassTexture) {
+      this.grassTexture = renderer.createTexture(makeGrassCanvas());
+    }
+
     if (this.dirty) {
       this.rebuild(world);
       this.dirty = false;
     }
 
     renderer.drawTriangles(this.borderVerts, this.borderVertexCount, PALETTE[TileType.Grass].border);
-    renderer.drawTriangles(this.fillVerts,   this.fillVertexCount,   PALETTE[TileType.Grass].fill);
+    renderer.drawTexturedTriangles(this.fillVerts, this.fillVertexCount, this.grassTexture);
   }
 
   // -------------------------------------------------------------------------
@@ -191,8 +239,8 @@ export class IsoRenderer {
   // -------------------------------------------------------------------------
 
   private rebuild(world: World): void {
-    let bi = 0; // border buffer cursor
-    let fi = 0; // fill buffer cursor
+    let bi = 0; // border buffer cursor (2 floats per vertex)
+    let fi = 0; // fill buffer cursor  (4 floats per vertex)
 
     for (let row = 0; row < world.rows; row++) {
       for (let col = 0; col < world.cols; col++) {
@@ -200,12 +248,12 @@ export class IsoRenderer {
         const cx = sx;
         const cy = sy + HH; // centre of the diamond
 
-        bi = writeDiamond(this.borderVerts, bi, cx, cy, HW,          HH);
-        fi = writeDiamond(this.fillVerts,   fi, cx, cy, HW * INSET,  HH * INSET);
+        bi = writeDiamond(    this.borderVerts, bi, cx, cy, HW,         HH);
+        fi = writeFillDiamond(this.fillVerts,   fi, cx, cy, HW * INSET, HH * INSET);
       }
     }
 
-    this.borderVertexCount = bi / 2;
-    this.fillVertexCount   = fi / 2;
+    this.borderVertexCount = bi / 2; // 2 floats per vertex
+    this.fillVertexCount   = fi / 4; // 4 floats per vertex (x,y,u,v)
   }
 }

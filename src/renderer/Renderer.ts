@@ -1,4 +1,9 @@
-import { VERTEX_SHADER_SRC, FRAGMENT_SHADER_SRC } from './shaders';
+import {
+  VERTEX_SHADER_SRC,
+  FRAGMENT_SHADER_SRC,
+  TEX_VERTEX_SHADER_SRC,
+  TEX_FRAGMENT_SHADER_SRC,
+} from './shaders';
 
 export type Color = [r: number, g: number, b: number, a: number];
 
@@ -44,15 +49,29 @@ function createProgram(
  */
 export class Renderer {
   private gl: WebGLRenderingContext;
+
+  // ---- Color program (solid-color geometry) --------------------------------
   private program: WebGLProgram;
   private positionBuffer: WebGLBuffer;
-
-  // Cached attribute / uniform locations
   private aPosition: number;
   private uResolution: WebGLUniformLocation;
   private uColor: WebGLUniformLocation;
   private uOffset: WebGLUniformLocation;
   private uZoom: WebGLUniformLocation;
+
+  // ---- Textured program (image-mapped geometry) ----------------------------
+  private texProgram: WebGLProgram;
+  private texBuffer: WebGLBuffer;
+  private aTexPosition: number;
+  private aTexCoord: number;
+  private uTexOffset: WebGLUniformLocation;
+  private uTexZoom: WebGLUniformLocation;
+  private uTexSampler: WebGLUniformLocation;
+
+  // ---- Cached camera state (applied to both programs) ----------------------
+  private _offsetX = 0;
+  private _offsetY = 0;
+  private _zoom    = 1.0;
 
   readonly width: number;
   readonly height: number;
@@ -92,6 +111,35 @@ export class Renderer {
     if (!buf) throw new Error('Failed to create position buffer');
     this.positionBuffer = buf;
 
+    // ---- Textured program ---------------------------------------------------
+    this.texProgram  = createProgram(gl, TEX_VERTEX_SHADER_SRC, TEX_FRAGMENT_SHADER_SRC);
+    gl.useProgram(this.texProgram);
+
+    this.aTexPosition = gl.getAttribLocation(this.texProgram, 'a_position');
+    this.aTexCoord    = gl.getAttribLocation(this.texProgram, 'a_texcoord');
+
+    const uTexRes = gl.getUniformLocation(this.texProgram, 'u_resolution');
+    const uTexOff = gl.getUniformLocation(this.texProgram, 'u_offset');
+    const uTexZm  = gl.getUniformLocation(this.texProgram, 'u_zoom');
+    const uTexSmp = gl.getUniformLocation(this.texProgram, 'u_texture');
+    if (!uTexRes || !uTexOff || !uTexZm || !uTexSmp) {
+      throw new Error('Missing tex shader uniforms');
+    }
+    this.uTexOffset  = uTexOff;
+    this.uTexZoom    = uTexZm;
+    this.uTexSampler = uTexSmp;
+
+    gl.uniform2f(uTexRes, this.width, this.height);
+    gl.uniform2f(uTexOff, 0, 0);
+    gl.uniform1f(uTexZm, 1.0);
+
+    const texBuf = gl.createBuffer();
+    if (!texBuf) throw new Error('Failed to create tex buffer');
+    this.texBuffer = texBuf;
+
+    // Restore color program as active default
+    gl.useProgram(this.program);
+
     gl.viewport(0, 0, this.width, this.height);
   }
 
@@ -101,12 +149,75 @@ export class Renderer {
    * the camera.
    */
   setOffset(x: number, y: number): void {
+    this._offsetX = x;
+    this._offsetY = y;
     this.gl.uniform2f(this.uOffset, x, y);
   }
 
   /** Set the zoom scale applied around the viewport centre. 1.0 = no zoom. */
   setZoom(zoom: number): void {
+    this._zoom = zoom;
     this.gl.uniform1f(this.uZoom, zoom);
+  }
+
+  /**
+   * Upload an image source as a WebGL texture.
+   *
+   * The source must have power-of-two dimensions so that mipmaps can be
+   * generated (used for smooth downscaling at far zoom).
+   */
+  createTexture(source: TexImageSource): WebGLTexture {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    if (!tex) throw new Error('Failed to create texture');
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
+  }
+
+  /**
+   * Draw a batch of pre-triangulated textured geometry in a single draw call.
+   *
+   * `data` contains interleaved x, y, u, v floats (4 floats per vertex).
+   * The current camera offset and zoom are applied automatically.
+   */
+  drawTexturedTriangles(
+    data: Float32Array,
+    vertexCount: number,
+    texture: WebGLTexture,
+  ): void {
+    const gl = this.gl;
+
+    gl.useProgram(this.texProgram);
+
+    // Apply cached camera state to this program
+    gl.uniform2f(this.uTexOffset, this._offsetX, this._offsetY);
+    gl.uniform1f(this.uTexZoom, this._zoom);
+
+    // Upload interleaved geometry
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.texBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+
+    // stride = 4 floats × 4 bytes = 16
+    gl.enableVertexAttribArray(this.aTexPosition);
+    gl.vertexAttribPointer(this.aTexPosition, 2, gl.FLOAT, false, 16, 0);
+
+    gl.enableVertexAttribArray(this.aTexCoord);
+    gl.vertexAttribPointer(this.aTexCoord, 2, gl.FLOAT, false, 16, 8);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.uniform1i(this.uTexSampler, 0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
+
+    // Restore the color program as the active default
+    gl.useProgram(this.program);
   }
 
   /** Clear the canvas to a solid color. */
