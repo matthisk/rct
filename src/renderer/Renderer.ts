@@ -51,6 +51,7 @@ export class Renderer {
   private aPosition: number;
   private uResolution: WebGLUniformLocation;
   private uColor: WebGLUniformLocation;
+  private uOffset: WebGLUniformLocation;
 
   readonly width: number;
   readonly height: number;
@@ -72,12 +73,15 @@ export class Renderer {
     // Uniforms
     const uRes = gl.getUniformLocation(this.program, 'u_resolution');
     const uCol = gl.getUniformLocation(this.program, 'u_color');
-    if (!uRes || !uCol) throw new Error('Missing shader uniforms');
+    const uOff = gl.getUniformLocation(this.program, 'u_offset');
+    if (!uRes || !uCol || !uOff) throw new Error('Missing shader uniforms');
     this.uResolution = uRes;
     this.uColor = uCol;
+    this.uOffset = uOff;
 
     // Set resolution once (canvas size doesn't change for now)
     gl.uniform2f(this.uResolution, this.width, this.height);
+    gl.uniform2f(this.uOffset, 0, 0);
 
     // Shared position buffer (reused every draw call)
     const buf = gl.createBuffer();
@@ -85,6 +89,15 @@ export class Renderer {
     this.positionBuffer = buf;
 
     gl.viewport(0, 0, this.width, this.height);
+  }
+
+  /**
+   * Set the camera scroll offset applied to all subsequent draw calls.
+   * Call with (0, 0) before drawing UI elements that should be unaffected by
+   * the camera.
+   */
+  setOffset(x: number, y: number): void {
+    this.gl.uniform2f(this.uOffset, x, y);
   }
 
   /** Clear the canvas to a solid color. */

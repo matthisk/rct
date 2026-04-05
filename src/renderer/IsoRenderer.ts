@@ -94,8 +94,11 @@ function writeDiamond(
  *   screenY = originY + (col + row) × HH
  */
 export class IsoRenderer {
-  originX: number;
-  originY: number;
+  readonly originX: number;
+  readonly originY: number;
+
+  private readonly worldCols: number;
+  private readonly worldRows: number;
 
   // Pre-allocated geometry buffers — one per pass, sized for the whole world.
   private borderVerts: Float32Array;
@@ -114,6 +117,9 @@ export class IsoRenderer {
     worldCols: number,
     worldRows: number,
   ) {
+    this.worldCols = worldCols;
+    this.worldRows = worldRows;
+
     // For worlds that fit inside the viewport, centre them.
     // For worlds larger than the viewport, show the top of the grid centered
     // horizontally — the camera system will let the player scroll.
@@ -135,6 +141,19 @@ export class IsoRenderer {
     const capacity = worldCols * worldRows * FLOATS_PER_TILE;
     this.borderVerts = new Float32Array(capacity);
     this.fillVerts   = new Float32Array(capacity);
+  }
+
+  /**
+   * Bounding box of the world in screen space (without camera offset applied).
+   * Used by the camera to compute scroll limits.
+   */
+  get worldBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
+    return {
+      minX: this.originX - this.worldRows * HW,
+      maxX: this.originX + this.worldCols * HW,
+      minY: this.originY,
+      maxY: this.originY + (this.worldCols + this.worldRows) * HH,
+    };
   }
 
   /** Convert grid (col, row) to the screen position of the tile's N vertex. */
