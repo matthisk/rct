@@ -1,4 +1,11 @@
 import { Renderer } from '../renderer/Renderer';
+import { IsoRenderer } from '../renderer/IsoRenderer';
+import { World } from '../world/World';
+
+const WORLD_COLS = 20;
+const WORLD_ROWS = 20;
+
+const SKY: [number, number, number, number] = [0.53, 0.81, 0.98, 1.0];
 
 /**
  * Main game class.
@@ -8,11 +15,21 @@ import { Renderer } from '../renderer/Renderer';
  */
 export class Game {
   private renderer: Renderer;
+  private isoRenderer: IsoRenderer;
+  private world: World;
+
   private rafId: number = 0;
   private lastTime: number = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
+    this.world = new World(WORLD_COLS, WORLD_ROWS);
+    this.isoRenderer = new IsoRenderer(
+      this.renderer.width,
+      this.renderer.height,
+      WORLD_COLS,
+      WORLD_ROWS,
+    );
   }
 
   start(): void {
@@ -44,12 +61,7 @@ export class Game {
 
   /** Render the current frame. */
   private render(): void {
-    const r = this.renderer;
-
-    // Sky
-    r.clear([0.53, 0.81, 0.98, 1.0]);
-
-    // Ground
-    r.drawRect(0, r.height * 0.6, r.width, r.height * 0.4, [0.24, 0.55, 0.18, 1.0]);
+    this.renderer.clear(SKY);
+    this.isoRenderer.render(this.world, this.renderer);
   }
 }

@@ -104,31 +104,32 @@ export class Renderer {
    * @param color  RGBA color, each component in [0, 1]
    */
   drawRect(x: number, y: number, width: number, height: number, color: Color): void {
-    const gl = this.gl;
-
-    // Two triangles forming a quad
-    const x1 = x;
-    const x2 = x + width;
-    const y1 = y;
-    const y2 = y + height;
-
+    const x1 = x, x2 = x + width;
+    const y1 = y, y2 = y + height;
     // prettier-ignore
-    const positions = new Float32Array([
-      x1, y1,
-      x2, y1,
-      x1, y2,
-      x1, y2,
-      x2, y1,
-      x2, y2,
-    ]);
+    this.drawTriangles([
+      x1, y1,  x2, y1,  x1, y2,
+      x1, y2,  x2, y1,  x2, y2,
+    ], color);
+  }
+
+  /**
+   * Draw a batch of pre-triangulated geometry in a single draw call.
+   *
+   * @param positions Flat array of x,y pairs: [x0,y0, x1,y1, …] (length must be multiple of 6)
+   * @param color     RGBA color applied to every triangle in the batch
+   */
+  drawTriangles(positions: number[], color: Color): void {
+    const gl = this.gl;
+    const data = new Float32Array(positions);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
 
     gl.enableVertexAttribArray(this.aPosition);
     gl.vertexAttribPointer(this.aPosition, 2, gl.FLOAT, false, 0, 0);
 
     gl.uniform4fv(this.uColor, color);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.drawArrays(gl.TRIANGLES, 0, data.length / 2);
   }
 }
