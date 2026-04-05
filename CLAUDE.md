@@ -29,6 +29,19 @@ src/
     shaders.ts     — GLSL shader source strings
 ```
 
+## Git Workflow
+
+After every change, create a git commit unless explicitly told not to. Always include the user's prompt verbatim in the commit message body so there is a clear record of what was asked.
+
+Commit message format:
+```
+<short imperative summary>
+
+Prompt: "<exact user prompt>"
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+```
+
 ## Running Locally
 
 ```bash
