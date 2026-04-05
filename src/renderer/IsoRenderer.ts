@@ -13,14 +13,17 @@ export const TILE_W = 64;
 /** Full pixel height of one tile diamond (north → south). */
 export const TILE_H = 32;
 
-const HW = TILE_W / 2; // half-width  = 32
-const HH = TILE_H / 2; // half-height = 16
+const HW = TILE_W / 2; // 32
+const HH = TILE_H / 2; // 16
 
 /**
- * How much the inner (fill) diamond is scaled relative to the outer (border)
- * diamond.  The gap between them creates the visible tile border.
+ * Inner diamond scale factor.  The gap between the outer (border) and inner
+ * (fill) diamond creates the visible tile grid lines.
  */
 const INSET = 0.82;
+
+/** Floats written per tile per pass: 2 triangles × 3 vertices × 2 coords. */
+const FLOATS_PER_TILE = 12;
 
 // ---------------------------------------------------------------------------
 // Per-tile-type colour palette
@@ -40,8 +43,8 @@ const PALETTE: Record<TileType, TilePalette> = {
 // ---------------------------------------------------------------------------
 
 /**
- * Append two triangles forming a diamond (rhombus) centered at (cx, cy)
- * with given half-widths into the flat vertex output array.
+ * Write two triangles forming a diamond centered at (cx, cy) directly into
+ * a pre-allocated Float32Array starting at `offset`.  Returns the next offset.
  *
  *         N
  *       /   \
@@ -49,22 +52,29 @@ const PALETTE: Record<TileType, TilePalette> = {
  *       \   /
  *         S
  */
-function pushDiamond(
-  out: number[],
+function writeDiamond(
+  out: Float32Array,
+  offset: number,
   cx: number,
   cy: number,
   hw: number,
   hh: number,
-): void {
+): number {
   const nx = cx,      ny = cy - hh;
   const ex = cx + hw, ey = cy;
   const sx = cx,      sy = cy + hh;
   const wx = cx - hw, wy = cy;
 
   // Triangle 1: N → E → S
-  out.push(nx, ny, ex, ey, sx, sy);
+  out[offset++] = nx; out[offset++] = ny;
+  out[offset++] = ex; out[offset++] = ey;
+  out[offset++] = sx; out[offset++] = sy;
   // Triangle 2: N → S → W
-  out.push(nx, ny, sx, sy, wx, wy);
+  out[offset++] = nx; out[offset++] = ny;
+  out[offset++] = sx; out[offset++] = sy;
+  out[offset++] = wx; out[offset++] = wy;
+
+  return offset;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,16 +85,28 @@ function pushDiamond(
  * Converts tile-grid coordinates to screen coordinates and renders the world
  * using the painter's algorithm (back row first → front row last).
  *
- * Screen origin is the N-vertex of tile (0, 0).  The grid is centred
- * horizontally and vertically within the canvas.
+ * The screen origin is the N-vertex of tile (0, 0).  For worlds larger than
+ * the viewport the origin is positioned so the top of the grid is near the
+ * top-centre of the canvas; the camera system will offset from here.
  *
- * Tile (col, row) → screen top-vertex:
+ * Tile (col, row) → screen N-vertex:
  *   screenX = originX + (col − row) × HW
  *   screenY = originY + (col + row) × HH
  */
 export class IsoRenderer {
-  private originX: number;
-  private originY: number;
+  originX: number;
+  originY: number;
+
+  // Pre-allocated geometry buffers — one per pass, sized for the whole world.
+  private borderVerts: Float32Array;
+  private fillVerts: Float32Array;
+
+  // Vertex counts written into the buffers on the last rebuild.
+  private borderVertexCount = 0;
+  private fillVertexCount   = 0;
+
+  // When true the buffers are rebuilt before the next draw.
+  private dirty = true;
 
   constructor(
     canvasWidth: number,
@@ -92,14 +114,27 @@ export class IsoRenderer {
     worldCols: number,
     worldRows: number,
   ) {
-    // The total screen span of the grid:
-    //   width  = (cols + rows) × HW
-    //   height = (cols + rows) × HH
-    // We centre that span inside the canvas.
+    // For worlds that fit inside the viewport, centre them.
+    // For worlds larger than the viewport, show the top of the grid centered
+    // horizontally — the camera system will let the player scroll.
     const gridW = (worldCols + worldRows) * HW;
     const gridH = (worldCols + worldRows) * HH;
-    this.originX = Math.round((canvasWidth - gridW) / 2 + worldRows * HW);
-    this.originY = Math.round((canvasHeight - gridH) / 2);
+
+    if (gridW <= canvasWidth) {
+      this.originX = Math.round((canvasWidth - gridW) / 2 + worldRows * HW);
+    } else {
+      this.originX = Math.round(canvasWidth / 2);
+    }
+
+    if (gridH <= canvasHeight) {
+      this.originY = Math.round((canvasHeight - gridH) / 2);
+    } else {
+      this.originY = 40; // small top margin; camera scrolling will shift this
+    }
+
+    const capacity = worldCols * worldRows * FLOATS_PER_TILE;
+    this.borderVerts = new Float32Array(capacity);
+    this.fillVerts   = new Float32Array(capacity);
   }
 
   /** Convert grid (col, row) to the screen position of the tile's N vertex. */
@@ -110,38 +145,48 @@ export class IsoRenderer {
     };
   }
 
+  /** Mark geometry as stale so it is rebuilt before the next draw. */
+  invalidate(): void {
+    this.dirty = true;
+  }
+
   /**
    * Render the entire world.
    *
-   * Geometry is batched per tile type (border pass + fill pass), resulting in
-   * 2 × N_tile_types draw calls regardless of grid size.
+   * Geometry is rebuilt only when `dirty` (world changed).  Each pass is a
+   * single WebGL draw call per tile type (2 draw calls total for a grass-only
+   * world, regardless of grid size).
    */
   render(world: World, renderer: Renderer): void {
-    // Collect geometry per tile type so we can issue one draw call per colour.
-    const borderBatch = new Map<TileType, number[]>();
-    const fillBatch   = new Map<TileType, number[]>();
+    if (this.dirty) {
+      this.rebuild(world);
+      this.dirty = false;
+    }
+
+    renderer.drawTriangles(this.borderVerts, this.borderVertexCount, PALETTE[TileType.Grass].border);
+    renderer.drawTriangles(this.fillVerts,   this.fillVertexCount,   PALETTE[TileType.Grass].fill);
+  }
+
+  // -------------------------------------------------------------------------
+  // Private
+  // -------------------------------------------------------------------------
+
+  private rebuild(world: World): void {
+    let bi = 0; // border buffer cursor
+    let fi = 0; // fill buffer cursor
 
     for (let row = 0; row < world.rows; row++) {
       for (let col = 0; col < world.cols; col++) {
-        const type = world.getTile(col, row);
         const { sx, sy } = this.tileToScreen(col, row);
         const cx = sx;
         const cy = sy + HH; // centre of the diamond
 
-        if (!borderBatch.has(type)) borderBatch.set(type, []);
-        if (!fillBatch.has(type))   fillBatch.set(type, []);
-
-        pushDiamond(borderBatch.get(type)!, cx, cy, HW, HH);
-        pushDiamond(fillBatch.get(type)!,   cx, cy, HW * INSET, HH * INSET);
+        bi = writeDiamond(this.borderVerts, bi, cx, cy, HW,          HH);
+        fi = writeDiamond(this.fillVerts,   fi, cx, cy, HW * INSET,  HH * INSET);
       }
     }
 
-    // Draw border pass (all tile types), then fill pass — 2 draw calls each.
-    for (const [type, verts] of borderBatch) {
-      renderer.drawTriangles(verts, PALETTE[type].border);
-    }
-    for (const [type, verts] of fillBatch) {
-      renderer.drawTriangles(verts, PALETTE[type].fill);
-    }
+    this.borderVertexCount = bi / 2;
+    this.fillVertexCount   = fi / 2;
   }
 }

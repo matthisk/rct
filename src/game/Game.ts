@@ -2,8 +2,11 @@ import { Renderer } from '../renderer/Renderer';
 import { IsoRenderer } from '../renderer/IsoRenderer';
 import { World } from '../world/World';
 
-const WORLD_COLS = 20;
-const WORLD_ROWS = 20;
+// 128×128 matches a real RCT1 scenario map.  At 64×32 px per tile the grid
+// spans ~8 192 × 4 096 px — well beyond the 1280×720 viewport in every
+// direction.  The camera system will let the player scroll the full park.
+const WORLD_COLS = 128;
+const WORLD_ROWS = 128;
 
 const SKY: [number, number, number, number] = [0.53, 0.81, 0.98, 1.0];
 

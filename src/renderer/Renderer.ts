@@ -107,21 +107,25 @@ export class Renderer {
     const x1 = x, x2 = x + width;
     const y1 = y, y2 = y + height;
     // prettier-ignore
-    this.drawTriangles([
+    const data = new Float32Array([
       x1, y1,  x2, y1,  x1, y2,
       x1, y2,  x2, y1,  x2, y2,
-    ], color);
+    ]);
+    this.drawTriangles(data, 6, color);
   }
 
   /**
    * Draw a batch of pre-triangulated geometry in a single draw call.
    *
-   * @param positions Flat array of x,y pairs: [x0,y0, x1,y1, …] (length must be multiple of 6)
-   * @param color     RGBA color applied to every triangle in the batch
+   * Callers are expected to own and reuse the Float32Array to avoid GC
+   * pressure on large batches.
+   *
+   * @param data        Pre-allocated Float32Array of x,y pairs
+   * @param vertexCount Number of vertices to draw (data must hold at least vertexCount * 2 floats)
+   * @param color       RGBA color applied to every triangle in the batch
    */
-  drawTriangles(positions: number[], color: Color): void {
+  drawTriangles(data: Float32Array, vertexCount: number, color: Color): void {
     const gl = this.gl;
-    const data = new Float32Array(positions);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
@@ -130,6 +134,6 @@ export class Renderer {
     gl.vertexAttribPointer(this.aPosition, 2, gl.FLOAT, false, 0, 0);
 
     gl.uniform4fv(this.uColor, color);
-    gl.drawArrays(gl.TRIANGLES, 0, data.length / 2);
+    gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
   }
 }
