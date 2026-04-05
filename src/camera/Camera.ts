@@ -70,6 +70,7 @@ export class Camera {
     this.worldMaxX    = worldMaxX;
     this.worldMinY    = worldMinY;
     this.worldMaxY    = worldMaxY;
+    this.reclamp();
   }
 
   get zoomLevel(): ZoomLevel { return this._zoomLevel; }
