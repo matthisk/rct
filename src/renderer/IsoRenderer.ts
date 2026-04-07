@@ -43,7 +43,15 @@ const PALETTE: Record<TileType, TilePalette> = {
     border: [0.18, 0.42, 0.07, 1.0],
     fill:   [0.40, 0.72, 0.17, 1.0],
   },
+  // Tree tiles share the same grass base; the tree sprite is drawn on top.
+  [TileType.Tree]: {
+    border: [0.18, 0.42, 0.07, 1.0],
+    fill:   [0.40, 0.72, 0.17, 1.0],
+  },
 };
+
+const TREE_TRUNK:  Color = [0.45, 0.28, 0.05, 1.0];
+const TREE_CANOPY: Color = [0.13, 0.55, 0.07, 1.0];
 
 // ---------------------------------------------------------------------------
 // Geometry helpers
@@ -83,6 +91,27 @@ function writeDiamond(
   out[offset++] = sx; out[offset++] = sy;
   out[offset++] = wx; out[offset++] = wy;
 
+  return offset;
+}
+
+/**
+ * Write a rectangle (2 triangles, 12 floats) directly into `out`.
+ * Used to batch trunk geometry without per-tile draw calls.
+ */
+function writeRect(
+  out: Float32Array,
+  offset: number,
+  x: number, y: number,
+  w: number, h: number,
+): number {
+  const x1 = x, x2 = x + w;
+  const y1 = y, y2 = y + h;
+  out[offset++] = x1; out[offset++] = y1;
+  out[offset++] = x2; out[offset++] = y1;
+  out[offset++] = x1; out[offset++] = y2;
+  out[offset++] = x1; out[offset++] = y2;
+  out[offset++] = x2; out[offset++] = y1;
+  out[offset++] = x2; out[offset++] = y2;
   return offset;
 }
 
@@ -144,10 +173,14 @@ export class IsoRenderer {
   // Pre-allocated geometry buffers — one per pass, sized for the whole world.
   private borderVerts: Float32Array;
   private fillVerts: Float32Array;
+  private treeTrunkVerts:  Float32Array;
+  private treeCanopyVerts: Float32Array;
 
   // Vertex counts written into the buffers on the last rebuild.
-  private borderVertexCount = 0;
-  private fillVertexCount   = 0;
+  private borderVertexCount     = 0;
+  private fillVertexCount       = 0;
+  private treeTrunkVertexCount  = 0;
+  private treeCanopyVertexCount = 0;
 
   // Grass texture, created lazily on the first render() call.
   private grassTexture: WebGLTexture | null = null;
@@ -183,8 +216,11 @@ export class IsoRenderer {
     }
 
     const tileCount = worldCols * worldRows;
-    this.borderVerts = new Float32Array(tileCount * BORDER_FLOATS_PER_TILE);
-    this.fillVerts   = new Float32Array(tileCount * FILL_FLOATS_PER_TILE);
+    this.borderVerts     = new Float32Array(tileCount * BORDER_FLOATS_PER_TILE);
+    this.fillVerts       = new Float32Array(tileCount * FILL_FLOATS_PER_TILE);
+    // Tree buffers: worst case every tile is a tree (2 triangles = 12 floats each).
+    this.treeTrunkVerts  = new Float32Array(tileCount * BORDER_FLOATS_PER_TILE);
+    this.treeCanopyVerts = new Float32Array(tileCount * BORDER_FLOATS_PER_TILE);
   }
 
   /**
@@ -217,7 +253,9 @@ export class IsoRenderer {
    * Render the entire world.
    *
    * Geometry is rebuilt only when `dirty` (world changed).
-   * Two draw calls total: border (solid color) + fill (textured).
+   * Four draw calls total: tile borders, tile fills (textured), tree trunks,
+   * tree canopies.  Tree sprites are drawn after the ground so they appear
+   * on top; the painter's-algorithm row order keeps depth correct.
    */
   render(world: World, renderer: Renderer): void {
     // Create the grass texture on first use (requires a live Renderer/GL context).
@@ -232,6 +270,8 @@ export class IsoRenderer {
 
     renderer.drawTriangles(this.borderVerts, this.borderVertexCount, PALETTE[TileType.Grass].border);
     renderer.drawTexturedTriangles(this.fillVerts, this.fillVertexCount, this.grassTexture);
+    renderer.drawTriangles(this.treeTrunkVerts,  this.treeTrunkVertexCount,  TREE_TRUNK);
+    renderer.drawTriangles(this.treeCanopyVerts, this.treeCanopyVertexCount, TREE_CANOPY);
   }
 
   // -------------------------------------------------------------------------
@@ -239,8 +279,10 @@ export class IsoRenderer {
   // -------------------------------------------------------------------------
 
   private rebuild(world: World): void {
-    let bi = 0; // border buffer cursor (2 floats per vertex)
-    let fi = 0; // fill buffer cursor  (4 floats per vertex)
+    let bi = 0; // border buffer cursor (2 floats/vertex)
+    let fi = 0; // fill buffer cursor   (4 floats/vertex, interleaved x,y,u,v)
+    let ti = 0; // trunk buffer cursor  (2 floats/vertex)
+    let ci = 0; // canopy buffer cursor (2 floats/vertex)
 
     for (let row = 0; row < world.rows; row++) {
       for (let col = 0; col < world.cols; col++) {
@@ -250,10 +292,19 @@ export class IsoRenderer {
 
         bi = writeDiamond(    this.borderVerts, bi, cx, cy, HW,         HH);
         fi = writeFillDiamond(this.fillVerts,   fi, cx, cy, HW * INSET, HH * INSET);
+
+        if (world.getTile(col, row) === TileType.Tree) {
+          // Trunk: 4 px wide, 12 px tall, rooted at the diamond's N vertex.
+          ti = writeRect(this.treeTrunkVerts, ti, cx - 2, cy - HH - 12, 4, 12);
+          // Canopy: diamond centered 14 px above the trunk top.
+          ci = writeDiamond(this.treeCanopyVerts, ci, cx, cy - HH - 26, 18, 14);
+        }
       }
     }
 
-    this.borderVertexCount = bi / 2; // 2 floats per vertex
-    this.fillVertexCount   = fi / 4; // 4 floats per vertex (x,y,u,v)
+    this.borderVertexCount     = bi / 2;
+    this.fillVertexCount       = fi / 4;
+    this.treeTrunkVertexCount  = ti / 2;
+    this.treeCanopyVertexCount = ci / 2;
   }
 }
