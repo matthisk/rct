@@ -294,10 +294,10 @@ export class IsoRenderer {
         fi = writeFillDiamond(this.fillVerts,   fi, cx, cy, HW * INSET, HH * INSET);
 
         if (world.getTile(col, row) === TileType.Tree) {
-          // Trunk: 4 px wide, 12 px tall, rooted at the diamond's N vertex.
-          ti = writeRect(this.treeTrunkVerts, ti, cx - 2, cy - HH - 12, 4, 12);
+          // Trunk: 4 px wide, 12 px tall, rooted at the diamond centre.
+          ti = writeRect(this.treeTrunkVerts, ti, cx - 2, cy - 12, 4, 12);
           // Canopy: diamond centered 14 px above the trunk top.
-          ci = writeDiamond(this.treeCanopyVerts, ci, cx, cy - HH - 26, 18, 14);
+          ci = writeDiamond(this.treeCanopyVerts, ci, cx, cy - 26, 18, 14);
         }
       }
     }
