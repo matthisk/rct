@@ -23,6 +23,12 @@ const HH = TILE_H / 2; // 16
  */
 const INSET = 0.82;
 
+/** Screen pixels of vertical shift per height unit. */
+const HEIGHT_STEP = 4;
+
+/** Maximum height value — used to size the cliff buffer. */
+const MAX_HEIGHT = 10;
+
 /** Floats per tile in the border pass: 2 triangles × 3 vertices × 2 coords. */
 const BORDER_FLOATS_PER_TILE = 12;
 
@@ -31,6 +37,12 @@ const BORDER_FLOATS_PER_TILE = 12;
  * 2 triangles × 3 vertices × 4 components (x, y, u, v).
  */
 const FILL_FLOATS_PER_TILE = 24;
+
+/**
+ * Floats per tile in the cliff pass: up to 2 faces (SW + SE) × 12 floats each.
+ * Worst case = every tile has both cliff faces.
+ */
+const CLIFF_FLOATS_PER_TILE = 2 * BORDER_FLOATS_PER_TILE;
 
 // ---------------------------------------------------------------------------
 // Per-tile-type colour palette
@@ -53,6 +65,7 @@ const PALETTE: Record<TileType, TilePalette> = {
 
 const TREE_TRUNK:  Color = [0.45, 0.28, 0.05, 1.0];
 const TREE_CANOPY: Color = [0.13, 0.55, 0.07, 1.0];
+const EARTH:       Color = [0.55, 0.37, 0.15, 1.0]; // brown cliff / earth side
 
 /** Visual dimensions for each tree style. */
 const TREE_STYLES: Partial<Record<TileType, { trunkH: number; hw: number; hh: number }>> = {
@@ -99,6 +112,26 @@ function writeDiamond(
   out[offset++] = sx; out[offset++] = sy;
   out[offset++] = wx; out[offset++] = wy;
 
+  return offset;
+}
+
+/**
+ * Write a quadrilateral (2 triangles, 12 floats) from four corners into `out`.
+ * Winding: TL → TR → BR (triangle 1), TL → BR → BL (triangle 2).
+ */
+function writeQuad(
+  out: Float32Array, offset: number,
+  tlx: number, tly: number,
+  trx: number, try_: number,
+  brx: number, bry: number,
+  blx: number, bly: number,
+): number {
+  out[offset++] = tlx; out[offset++] = tly;
+  out[offset++] = trx; out[offset++] = try_;
+  out[offset++] = brx; out[offset++] = bry;
+  out[offset++] = tlx; out[offset++] = tly;
+  out[offset++] = brx; out[offset++] = bry;
+  out[offset++] = blx; out[offset++] = bly;
   return offset;
 }
 
@@ -179,14 +212,16 @@ export class IsoRenderer {
   private readonly worldRows: number;
 
   // Pre-allocated geometry buffers — one per pass, sized for the whole world.
-  private borderVerts: Float32Array;
-  private fillVerts: Float32Array;
+  private borderVerts:     Float32Array;
+  private fillVerts:       Float32Array;
+  private cliffVerts:      Float32Array;
   private treeTrunkVerts:  Float32Array;
   private treeCanopyVerts: Float32Array;
 
   // Vertex counts written into the buffers on the last rebuild.
   private borderVertexCount     = 0;
   private fillVertexCount       = 0;
+  private cliffVertexCount      = 0;
   private treeTrunkVertexCount  = 0;
   private treeCanopyVertexCount = 0;
 
@@ -226,6 +261,8 @@ export class IsoRenderer {
     const tileCount = worldCols * worldRows;
     this.borderVerts     = new Float32Array(tileCount * BORDER_FLOATS_PER_TILE);
     this.fillVerts       = new Float32Array(tileCount * FILL_FLOATS_PER_TILE);
+    // Cliff buffer: up to 2 faces per tile (SW + SE), each 12 floats.
+    this.cliffVerts      = new Float32Array(tileCount * CLIFF_FLOATS_PER_TILE);
     // Tree buffers: worst case every tile is a tree (2 triangles = 12 floats each).
     this.treeTrunkVerts  = new Float32Array(tileCount * BORDER_FLOATS_PER_TILE);
     this.treeCanopyVerts = new Float32Array(tileCount * BORDER_FLOATS_PER_TILE);
@@ -234,12 +271,15 @@ export class IsoRenderer {
   /**
    * Bounding box of the world in screen space (without camera offset applied).
    * Used by the camera to compute scroll limits.
+   *
+   * minY is expanded upward by the maximum possible height visual offset so
+   * tall tiles at the top of the grid remain reachable.
    */
   get worldBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
     return {
       minX: this.originX - this.worldRows * HW,
       maxX: this.originX + this.worldCols * HW,
-      minY: this.originY,
+      minY: this.originY - MAX_HEIGHT * HEIGHT_STEP,
       maxY: this.originY + (this.worldCols + this.worldRows) * HH,
     };
   }
@@ -276,8 +316,9 @@ export class IsoRenderer {
       this.dirty = false;
     }
 
-    renderer.drawTriangles(this.borderVerts, this.borderVertexCount, PALETTE[TileType.Grass].border);
+    renderer.drawTriangles(this.borderVerts,     this.borderVertexCount,     PALETTE[TileType.Grass].border);
     renderer.drawTexturedTriangles(this.fillVerts, this.fillVertexCount, this.grassTexture);
+    renderer.drawTriangles(this.cliffVerts,      this.cliffVertexCount,      EARTH);
     renderer.drawTriangles(this.treeTrunkVerts,  this.treeTrunkVertexCount,  TREE_TRUNK);
     renderer.drawTriangles(this.treeCanopyVerts, this.treeCanopyVertexCount, TREE_CANOPY);
   }
@@ -289,6 +330,7 @@ export class IsoRenderer {
   private rebuild(world: World): void {
     let bi = 0; // border buffer cursor (2 floats/vertex)
     let fi = 0; // fill buffer cursor   (4 floats/vertex, interleaved x,y,u,v)
+    let ki = 0; // cliff buffer cursor  (2 floats/vertex)
     let ti = 0; // trunk buffer cursor  (2 floats/vertex)
     let ci = 0; // canopy buffer cursor (2 floats/vertex)
 
@@ -296,23 +338,67 @@ export class IsoRenderer {
       for (let col = 0; col < world.cols; col++) {
         const { sx, sy } = this.tileToScreen(col, row);
         const cx = sx;
-        const cy = sy + HH; // centre of the diamond
+        const cy = sy + HH; // unshifted diamond centre
 
-        bi = writeDiamond(    this.borderVerts, bi, cx, cy, HW,         HH);
-        fi = writeFillDiamond(this.fillVerts,   fi, cx, cy, HW * INSET, HH * INSET);
+        const h  = world.getHeight(col, row);
+        const ys = h * HEIGHT_STEP; // vertical shift in screen px (positive h → up)
+        const acy = cy - ys;        // actual centre after height offset
 
+        // Top face
+        bi = writeDiamond(    this.borderVerts, bi, cx, acy, HW,         HH);
+        fi = writeFillDiamond(this.fillVerts,   fi, cx, acy, HW * INSET, HH * INSET);
+
+        // SW cliff — between this tile (col, row) and its SW neighbour (col, row+1).
+        // Visible when this tile is higher; the face drops from h down to h2.
+        //
+        //   TL = W of this tile  (cx-HW, cy-ys)
+        //   TR = S of this tile  (cx,    cy+HH-ys)
+        //   BR = E of neighbour  (cx,    cy+HH-ys2)
+        //   BL = N of neighbour  (cx-HW, cy-ys2)
+        if (row + 1 < world.rows) {
+          const h2  = world.getHeight(col, row + 1);
+          const ys2 = h2 * HEIGHT_STEP;
+          if (h > h2) {
+            ki = writeQuad(this.cliffVerts, ki,
+              cx - HW, cy - ys,        // TL
+              cx,      cy + HH - ys,   // TR
+              cx,      cy + HH - ys2,  // BR
+              cx - HW, cy - ys2,       // BL
+            );
+          }
+        }
+
+        // SE cliff — between this tile (col, row) and its SE neighbour (col+1, row).
+        //
+        //   TL = S of this tile  (cx,    cy+HH-ys)
+        //   TR = E of this tile  (cx+HW, cy-ys)
+        //   BR = N of neighbour  (cx+HW, cy-ys3)
+        //   BL = W of neighbour  (cx,    cy+HH-ys3)
+        if (col + 1 < world.cols) {
+          const h3  = world.getHeight(col + 1, row);
+          const ys3 = h3 * HEIGHT_STEP;
+          if (h > h3) {
+            ki = writeQuad(this.cliffVerts, ki,
+              cx,      cy + HH - ys,   // TL
+              cx + HW, cy - ys,        // TR
+              cx + HW, cy - ys3,       // BR
+              cx,      cy + HH - ys3,  // BL
+            );
+          }
+        }
+
+        // Tree sprite — rooted at the height-adjusted tile centre
         const style = TREE_STYLES[world.getTile(col, row)];
         if (style) {
-          // Trunk: 4 px wide, rooted at the diamond centre.
-          ti = writeRect(this.treeTrunkVerts, ti, cx - 2, cy - style.trunkH, 4, style.trunkH);
-          // Canopy: diamond centered 14 px above the trunk top.
-          ci = writeDiamond(this.treeCanopyVerts, ci, cx, cy - style.trunkH - 14, style.hw, style.hh);
+          ti = writeRect(   this.treeTrunkVerts,  ti, cx - 2, acy - style.trunkH, 4, style.trunkH);
+          ci = writeDiamond(this.treeCanopyVerts, ci, cx, acy - style.trunkH - 14, style.hw, style.hh);
         }
       }
     }
 
     this.borderVertexCount     = bi / 2;
     this.fillVertexCount       = fi / 4;
+    this.cliffVertexCount      = ki / 2;
     this.treeTrunkVertexCount  = ti / 2;
     this.treeCanopyVertexCount = ci / 2;
   }
