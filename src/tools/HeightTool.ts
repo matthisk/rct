@@ -33,7 +33,7 @@ export class HeightTool implements MouseTool {
   ) {}
 
   onMove(ctx: ToolContext): void {
-    this.hoveredTile = ctx.tile;
+    this.hoveredTile = this.dragTile ?? ctx.tile;
 
     if (!this.dragTile) return;
 
