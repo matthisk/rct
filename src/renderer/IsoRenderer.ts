@@ -29,17 +29,17 @@ const HEIGHT_STEP = 4;
 /** Maximum height value — used to size the cliff buffer. */
 const MAX_HEIGHT = 50;
 
-/** Floats per tile in the border pass: 2 triangles × 3 vertices × 2 coords. */
-const BORDER_FLOATS_PER_TILE = 12;
+/** Floats per tile in the border pass: 2 triangles × 3 vertices × 3 components (x, y, depth). */
+const BORDER_FLOATS_PER_TILE = 18;
 
 /**
  * Floats per tile in the fill (textured) pass:
- * 2 triangles × 3 vertices × 4 components (x, y, u, v).
+ * 2 triangles × 3 vertices × 5 components (x, y, u, v, depth).
  */
-const FILL_FLOATS_PER_TILE = 24;
+const FILL_FLOATS_PER_TILE = 30;
 
 /**
- * Floats per tile in the cliff pass: up to 2 faces (SW + SE) × 12 floats each.
+ * Floats per tile in the cliff pass: up to 2 faces (SW + SE) × 18 floats each.
  * Worst case = every tile has both cliff faces.
  */
 const CLIFF_FLOATS_PER_TILE = 2 * BORDER_FLOATS_PER_TILE;
@@ -80,18 +80,11 @@ const TREE_STYLES: Partial<Record<TileType, { trunkH: number; hw: number; hh: nu
 // ---------------------------------------------------------------------------
 
 /**
- * Write two triangles forming a diamond centered at (cx, cy) directly into
- * a pre-allocated Float32Array starting at `offset`.  Returns the next offset.
- *
- *         N
- *       /   \
- *      W     E
- *       \   /
- *         S
- *
- * Writes 12 floats (x, y) per vertex — for the border (color-only) pass.
+ * Write two triangles forming a flat (depth-less) diamond into `out`.
+ * Used only for the hover highlight which is drawn via drawTrianglesFlat.
+ * Writes 12 floats (x, y) per vertex.
  */
-function writeDiamond(
+function writeFlatDiamond(
   out: Float32Array,
   offset: number,
   cx: number,
@@ -104,11 +97,9 @@ function writeDiamond(
   const sx = cx,      sy = cy + hh;
   const wx = cx - hw, wy = cy;
 
-  // Triangle 1: N → E → S
   out[offset++] = nx; out[offset++] = ny;
   out[offset++] = ex; out[offset++] = ey;
   out[offset++] = sx; out[offset++] = sy;
-  // Triangle 2: N → S → W
   out[offset++] = nx; out[offset++] = ny;
   out[offset++] = sx; out[offset++] = sy;
   out[offset++] = wx; out[offset++] = wy;
@@ -117,7 +108,45 @@ function writeDiamond(
 }
 
 /**
- * Write a quadrilateral (2 triangles, 12 floats) from four corners into `out`.
+ * Write two triangles forming a diamond centered at (cx, cy) directly into
+ * a pre-allocated Float32Array starting at `offset`.  Returns the next offset.
+ *
+ *         N
+ *       /   \
+ *      W     E
+ *       \   /
+ *         S
+ *
+ * Writes 18 floats (x, y, depth) per vertex — for the border (color-only) pass.
+ */
+function writeDiamond(
+  out: Float32Array,
+  offset: number,
+  cx: number,
+  cy: number,
+  hw: number,
+  hh: number,
+  depth: number,
+): number {
+  const nx = cx,      ny = cy - hh;
+  const ex = cx + hw, ey = cy;
+  const sx = cx,      sy = cy + hh;
+  const wx = cx - hw, wy = cy;
+
+  // Triangle 1: N → E → S
+  out[offset++] = nx; out[offset++] = ny; out[offset++] = depth;
+  out[offset++] = ex; out[offset++] = ey; out[offset++] = depth;
+  out[offset++] = sx; out[offset++] = sy; out[offset++] = depth;
+  // Triangle 2: N → S → W
+  out[offset++] = nx; out[offset++] = ny; out[offset++] = depth;
+  out[offset++] = sx; out[offset++] = sy; out[offset++] = depth;
+  out[offset++] = wx; out[offset++] = wy; out[offset++] = depth;
+
+  return offset;
+}
+
+/**
+ * Write a quadrilateral (2 triangles, 18 floats) from four corners into `out`.
  * Winding: TL → TR → BR (triangle 1), TL → BR → BL (triangle 2).
  */
 function writeQuad(
@@ -126,18 +155,19 @@ function writeQuad(
   trx: number, try_: number,
   brx: number, bry: number,
   blx: number, bly: number,
+  depth: number,
 ): number {
-  out[offset++] = tlx; out[offset++] = tly;
-  out[offset++] = trx; out[offset++] = try_;
-  out[offset++] = brx; out[offset++] = bry;
-  out[offset++] = tlx; out[offset++] = tly;
-  out[offset++] = brx; out[offset++] = bry;
-  out[offset++] = blx; out[offset++] = bly;
+  out[offset++] = tlx; out[offset++] = tly; out[offset++] = depth;
+  out[offset++] = trx; out[offset++] = try_; out[offset++] = depth;
+  out[offset++] = brx; out[offset++] = bry; out[offset++] = depth;
+  out[offset++] = tlx; out[offset++] = tly; out[offset++] = depth;
+  out[offset++] = brx; out[offset++] = bry; out[offset++] = depth;
+  out[offset++] = blx; out[offset++] = bly; out[offset++] = depth;
   return offset;
 }
 
 /**
- * Write a rectangle (2 triangles, 12 floats) directly into `out`.
+ * Write a rectangle (2 triangles, 18 floats) directly into `out`.
  * Used to batch trunk geometry without per-tile draw calls.
  */
 function writeRect(
@@ -145,21 +175,22 @@ function writeRect(
   offset: number,
   x: number, y: number,
   w: number, h: number,
+  depth: number,
 ): number {
   const x1 = x, x2 = x + w;
   const y1 = y, y2 = y + h;
-  out[offset++] = x1; out[offset++] = y1;
-  out[offset++] = x2; out[offset++] = y1;
-  out[offset++] = x1; out[offset++] = y2;
-  out[offset++] = x1; out[offset++] = y2;
-  out[offset++] = x2; out[offset++] = y1;
-  out[offset++] = x2; out[offset++] = y2;
+  out[offset++] = x1; out[offset++] = y1; out[offset++] = depth;
+  out[offset++] = x2; out[offset++] = y1; out[offset++] = depth;
+  out[offset++] = x1; out[offset++] = y2; out[offset++] = depth;
+  out[offset++] = x1; out[offset++] = y2; out[offset++] = depth;
+  out[offset++] = x2; out[offset++] = y1; out[offset++] = depth;
+  out[offset++] = x2; out[offset++] = y2; out[offset++] = depth;
   return offset;
 }
 
 /**
- * Write two triangles forming a diamond with interleaved x, y, u, v data —
- * for the textured fill pass.  Writes 24 floats (4 per vertex).
+ * Write two triangles forming a diamond with interleaved x, y, u, v, depth data —
+ * for the textured fill pass.  Writes 30 floats (5 per vertex).
  *
  * UV corners: N=(0.5, 0), E=(1, 0.5), S=(0.5, 1), W=(0, 0.5).
  * This maps the diamond shape exactly to the full [0,1]×[0,1] texture space.
@@ -171,6 +202,7 @@ function writeFillDiamond(
   cy: number,
   hw: number,
   hh: number,
+  depth: number,
 ): number {
   const nx = cx,      ny = cy - hh;
   const ex = cx + hw, ey = cy;
@@ -178,13 +210,13 @@ function writeFillDiamond(
   const wx = cx - hw, wy = cy;
 
   // Triangle 1: N → E → S
-  out[offset++] = nx; out[offset++] = ny; out[offset++] = 0.5; out[offset++] = 0.0;
-  out[offset++] = ex; out[offset++] = ey; out[offset++] = 1.0; out[offset++] = 0.5;
-  out[offset++] = sx; out[offset++] = sy; out[offset++] = 0.5; out[offset++] = 1.0;
+  out[offset++] = nx; out[offset++] = ny; out[offset++] = 0.5; out[offset++] = 0.0; out[offset++] = depth;
+  out[offset++] = ex; out[offset++] = ey; out[offset++] = 1.0; out[offset++] = 0.5; out[offset++] = depth;
+  out[offset++] = sx; out[offset++] = sy; out[offset++] = 0.5; out[offset++] = 1.0; out[offset++] = depth;
   // Triangle 2: N → S → W
-  out[offset++] = nx; out[offset++] = ny; out[offset++] = 0.5; out[offset++] = 0.0;
-  out[offset++] = sx; out[offset++] = sy; out[offset++] = 0.5; out[offset++] = 1.0;
-  out[offset++] = wx; out[offset++] = wy; out[offset++] = 0.0; out[offset++] = 0.5;
+  out[offset++] = nx; out[offset++] = ny; out[offset++] = 0.5; out[offset++] = 0.0; out[offset++] = depth;
+  out[offset++] = sx; out[offset++] = sy; out[offset++] = 0.5; out[offset++] = 1.0; out[offset++] = depth;
+  out[offset++] = wx; out[offset++] = wy; out[offset++] = 0.0; out[offset++] = 0.5; out[offset++] = depth;
 
   return offset;
 }
@@ -374,12 +406,12 @@ export class IsoRenderer {
     renderer.drawTriangles(this.treeTrunkVerts,  this.treeTrunkVertexCount,  TREE_TRUNK);
     renderer.drawTriangles(this.treeCanopyVerts, this.treeCanopyVertexCount, TREE_CANOPY);
 
-    // Hover highlight — semi-transparent fill drawn last so it sits on top.
+    // Hover highlight — drawn without depth test so it always sits on top.
     if (this.hoverCol >= 0) {
       const { sx, sy } = this.tileToScreen(this.hoverCol, this.hoverRow);
       const hcy = sy + HH - world.getHeight(this.hoverCol, this.hoverRow) * HEIGHT_STEP;
-      writeDiamond(this.hoverVerts, 0, sx, hcy, HW * INSET, HH * INSET);
-      renderer.drawTriangles(this.hoverVerts, 6, HOVER_FILL);
+      writeFlatDiamond(this.hoverVerts, 0, sx, hcy, HW * INSET, HH * INSET);
+      renderer.drawTrianglesFlat(this.hoverVerts, 6, HOVER_FILL);
     }
   }
 
@@ -388,11 +420,13 @@ export class IsoRenderer {
   // -------------------------------------------------------------------------
 
   private rebuild(world: World): void {
-    let bi = 0; // border buffer cursor (2 floats/vertex)
-    let fi = 0; // fill buffer cursor   (4 floats/vertex, interleaved x,y,u,v)
-    let ki = 0; // cliff buffer cursor  (2 floats/vertex)
-    let ti = 0; // trunk buffer cursor  (2 floats/vertex)
-    let ci = 0; // canopy buffer cursor (2 floats/vertex)
+    let bi = 0; // border buffer cursor (3 floats/vertex: x,y,depth)
+    let fi = 0; // fill buffer cursor   (5 floats/vertex: x,y,u,v,depth)
+    let ki = 0; // cliff buffer cursor  (3 floats/vertex)
+    let ti = 0; // trunk buffer cursor  (3 floats/vertex)
+    let ci = 0; // canopy buffer cursor (3 floats/vertex)
+
+    const maxDepth = this.worldCols + this.worldRows;
 
     for (let row = 0; row < world.rows; row++) {
       for (let col = 0; col < world.cols; col++) {
@@ -404,9 +438,13 @@ export class IsoRenderer {
         const ys = h * HEIGHT_STEP; // vertical shift in screen px (positive h → up)
         const acy = cy - ys;        // actual centre after height offset
 
+        // Depth: higher (col+row) = closer to viewer = larger a_depth = smaller depth buffer value.
+        const tileDepth = (col + row) / maxDepth;
+        const treeDepth = (col + row + 0.5) / maxDepth;
+
         // Top face
-        bi = writeDiamond(    this.borderVerts, bi, cx, acy, HW,         HH);
-        fi = writeFillDiamond(this.fillVerts,   fi, cx, acy, HW * INSET, HH * INSET);
+        bi = writeDiamond(    this.borderVerts, bi, cx, acy, HW,         HH,         tileDepth);
+        fi = writeFillDiamond(this.fillVerts,   fi, cx, acy, HW * INSET, HH * INSET, tileDepth);
 
         // SW cliff — between this tile (col, row) and its SW neighbour (col, row+1).
         // Visible when this tile is higher; the face drops from h down to h2.
@@ -424,6 +462,7 @@ export class IsoRenderer {
               cx,      cy + HH - ys,   // TR
               cx,      cy + HH - ys2,  // BR
               cx - HW, cy - ys2,       // BL
+              tileDepth,
             );
           }
         }
@@ -443,6 +482,7 @@ export class IsoRenderer {
               cx + HW, cy - ys,        // TR
               cx + HW, cy - ys3,       // BR
               cx,      cy + HH - ys3,  // BL
+              tileDepth,
             );
           }
         }
@@ -450,16 +490,16 @@ export class IsoRenderer {
         // Tree sprite — rooted at the height-adjusted tile centre
         const style = TREE_STYLES[world.getTile(col, row)];
         if (style) {
-          ti = writeRect(   this.treeTrunkVerts,  ti, cx - 2, acy - style.trunkH, 4, style.trunkH);
-          ci = writeDiamond(this.treeCanopyVerts, ci, cx, acy - style.trunkH - 14, style.hw, style.hh);
+          ti = writeRect(   this.treeTrunkVerts,  ti, cx - 2, acy - style.trunkH, 4, style.trunkH, treeDepth);
+          ci = writeDiamond(this.treeCanopyVerts, ci, cx, acy - style.trunkH - 14, style.hw, style.hh, treeDepth);
         }
       }
     }
 
-    this.borderVertexCount     = bi / 2;
-    this.fillVertexCount       = fi / 4;
-    this.cliffVertexCount      = ki / 2;
-    this.treeTrunkVertexCount  = ti / 2;
-    this.treeCanopyVertexCount = ci / 2;
+    this.borderVertexCount     = bi / 3;
+    this.fillVertexCount       = fi / 5;
+    this.cliffVertexCount      = ki / 3;
+    this.treeTrunkVertexCount  = ti / 3;
+    this.treeCanopyVertexCount = ci / 3;
   }
 }

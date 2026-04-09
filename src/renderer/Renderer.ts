@@ -54,6 +54,7 @@ export class Renderer {
   private program: WebGLProgram;
   private positionBuffer: WebGLBuffer;
   private aPosition: number;
+  private aDepth: number;
   private uResolution: WebGLUniformLocation;
   private uColor: WebGLUniformLocation;
   private uOffset: WebGLUniformLocation;
@@ -64,6 +65,7 @@ export class Renderer {
   private texBuffer: WebGLBuffer;
   private aTexPosition: number;
   private aTexCoord: number;
+  private aTexDepth: number;
   private uTexOffset: WebGLUniformLocation;
   private uTexZoom: WebGLUniformLocation;
   private uTexSampler: WebGLUniformLocation;
@@ -87,8 +89,9 @@ export class Renderer {
     this.program = createProgram(gl, VERTEX_SHADER_SRC, FRAGMENT_SHADER_SRC);
     gl.useProgram(this.program);
 
-    // Attribute
+    // Attributes
     this.aPosition = gl.getAttribLocation(this.program, 'a_position');
+    this.aDepth    = gl.getAttribLocation(this.program, 'a_depth');
 
     // Uniforms
     const uRes  = gl.getUniformLocation(this.program, 'u_resolution');
@@ -117,6 +120,7 @@ export class Renderer {
 
     this.aTexPosition = gl.getAttribLocation(this.texProgram, 'a_position');
     this.aTexCoord    = gl.getAttribLocation(this.texProgram, 'a_texcoord');
+    this.aTexDepth    = gl.getAttribLocation(this.texProgram, 'a_depth');
 
     const uTexRes = gl.getUniformLocation(this.texProgram, 'u_resolution');
     const uTexOff = gl.getUniformLocation(this.texProgram, 'u_offset');
@@ -141,6 +145,10 @@ export class Renderer {
     gl.useProgram(this.program);
 
     gl.viewport(0, 0, this.width, this.height);
+
+    // Depth test — allows draw calls in any order; closer tiles occlude farther ones.
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
 
     // Standard pre-multiplied alpha blending — required for hover highlight overlay.
     gl.enable(gl.BLEND);
@@ -187,7 +195,7 @@ export class Renderer {
   /**
    * Draw a batch of pre-triangulated textured geometry in a single draw call.
    *
-   * `data` contains interleaved x, y, u, v floats (4 floats per vertex).
+   * `data` contains interleaved x, y, u, v, depth floats (5 floats per vertex).
    * The current camera offset and zoom are applied automatically.
    */
   drawTexturedTriangles(
@@ -207,12 +215,15 @@ export class Renderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.texBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
 
-    // stride = 4 floats × 4 bytes = 16
+    // stride = 5 floats × 4 bytes = 20
     gl.enableVertexAttribArray(this.aTexPosition);
-    gl.vertexAttribPointer(this.aTexPosition, 2, gl.FLOAT, false, 16, 0);
+    gl.vertexAttribPointer(this.aTexPosition, 2, gl.FLOAT, false, 20, 0);
 
     gl.enableVertexAttribArray(this.aTexCoord);
-    gl.vertexAttribPointer(this.aTexCoord, 2, gl.FLOAT, false, 16, 8);
+    gl.vertexAttribPointer(this.aTexCoord, 2, gl.FLOAT, false, 20, 8);
+
+    gl.enableVertexAttribArray(this.aTexDepth);
+    gl.vertexAttribPointer(this.aTexDepth, 1, gl.FLOAT, false, 20, 16);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -224,11 +235,12 @@ export class Renderer {
     gl.useProgram(this.program);
   }
 
-  /** Clear the canvas to a solid color. */
+  /** Clear the canvas to a solid color and reset the depth buffer. */
   clear(color: Color = [0.53, 0.81, 0.98, 1.0]): void {
     const [r, g, b, a] = color;
     this.gl.clearColor(r, g, b, a);
-    this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+    this.gl.clearDepth(1.0);
+    this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
   }
 
   /**
@@ -257,12 +269,39 @@ export class Renderer {
    * Callers are expected to own and reuse the Float32Array to avoid GC
    * pressure on large batches.
    *
-   * @param data        Pre-allocated Float32Array of x,y pairs
-   * @param vertexCount Number of vertices to draw (data must hold at least vertexCount * 2 floats)
+   * @param data        Pre-allocated Float32Array of x, y, depth triples
+   * @param vertexCount Number of vertices to draw (data must hold at least vertexCount * 3 floats)
    * @param color       RGBA color applied to every triangle in the batch
    */
   drawTriangles(data: Float32Array, vertexCount: number, color: Color): void {
     const gl = this.gl;
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+
+    // stride = 3 floats × 4 bytes = 12
+    gl.enableVertexAttribArray(this.aPosition);
+    gl.vertexAttribPointer(this.aPosition, 2, gl.FLOAT, false, 12, 0);
+
+    gl.enableVertexAttribArray(this.aDepth);
+    gl.vertexAttribPointer(this.aDepth, 1, gl.FLOAT, false, 12, 8);
+
+    gl.uniform4fv(this.uColor, color);
+    gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
+  }
+
+  /**
+   * Like drawTriangles but depth-testing is disabled.  Used for UI overlays
+   * (e.g. hover highlight) that must always render on top.
+   *
+   * @param data        Pre-allocated Float32Array of x, y pairs (no depth component)
+   * @param vertexCount Number of vertices
+   * @param color       RGBA color
+   */
+  drawTrianglesFlat(data: Float32Array, vertexCount: number, color: Color): void {
+    const gl = this.gl;
+
+    gl.disable(gl.DEPTH_TEST);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
@@ -272,5 +311,7 @@ export class Renderer {
 
     gl.uniform4fv(this.uColor, color);
     gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
+
+    gl.enable(gl.DEPTH_TEST);
   }
 }
