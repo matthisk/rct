@@ -72,9 +72,16 @@ export class World {
     return this.paths[row * this.cols + col] as PathType;
   }
 
-  /** Place or remove a path on (col, row). */
+  /** Place or remove a path on (col, row).  Placing a path clears any tree on that tile. */
   setPath(col: number, row: number, type: PathType): void {
     this.paths[row * this.cols + col] = type;
+    if (type !== PathType.None) {
+      const idx = row * this.cols + col;
+      const tile = this.tiles[idx] as TileType;
+      if (tile === TileType.TreeShort || tile === TileType.TreeMedium || tile === TileType.TreeTall) {
+        this.tiles[idx] = TileType.Grass;
+      }
+    }
   }
 
   /** True if (col, row) carries any path surface. */
