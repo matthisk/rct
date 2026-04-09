@@ -302,6 +302,9 @@ export class Renderer {
     const gl = this.gl;
 
     gl.disable(gl.DEPTH_TEST);
+    // aDepth may be enabled from a prior drawTriangles call; disable it so the
+    // 2-float-per-vertex buffer upload below doesn't cause an out-of-bounds read.
+    gl.disableVertexAttribArray(this.aDepth);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
