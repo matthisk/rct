@@ -548,45 +548,56 @@ export class IsoRenderer {
             // Centre diamond (inset so the surrounding grass border stays visible).
             pi[pathType] = writeDiamond(pBuf, pi[pathType]!, cx, acy, HW * PF, HH * PF, tileDepth);
 
-            // Arm toward NW neighbour (col−1, row) — spans the N→W edge of this tile.
+            // Arm toward NW neighbour (col−1, row) — spans the middle PF of the N→W edge.
+            // The arm only covers the central PF-fraction of the shared edge so the
+            // border grass remains visible at both ends of the connection.
             if (col > 0 && world.hasPath(col - 1, row)) {
+              // Edge N→W parameterised 0→1; take the middle PF band.
+              const nwP1x = cx - HW * (1 - PF) / 2, nwP1y = acy - HH * (1 + PF) / 2;
+              const nwP2x = cx - HW * (1 + PF) / 2, nwP2y = acy - HH * (1 - PF) / 2;
               pi[pathType] = writeQuad(pBuf, pi[pathType]!,
-                cx,          acy - HH * PF, // inset N
-                cx,          acy - HH,      // full  N
-                cx - HW,     acy,           // full  W
-                cx - HW * PF, acy,          // inset W
+                cx,           acy - HH * PF, // inset N
+                nwP1x,        nwP1y,         // edge upper (near N)
+                nwP2x,        nwP2y,         // edge lower (near W)
+                cx - HW * PF, acy,           // inset W
                 tileDepth,
               );
             }
 
-            // Arm toward NE neighbour (col, row−1) — spans the N→E edge of this tile.
+            // Arm toward NE neighbour (col, row−1) — spans the middle PF of the N→E edge.
             if (row > 0 && world.hasPath(col, row - 1)) {
+              const neP1x = cx + HW * (1 - PF) / 2, neP1y = acy - HH * (1 + PF) / 2;
+              const neP2x = cx + HW * (1 + PF) / 2, neP2y = acy - HH * (1 - PF) / 2;
               pi[pathType] = writeQuad(pBuf, pi[pathType]!,
-                cx,          acy - HH * PF, // inset N
-                cx,          acy - HH,      // full  N
-                cx + HW,     acy,           // full  E
-                cx + HW * PF, acy,          // inset E
+                cx,           acy - HH * PF, // inset N
+                neP1x,        neP1y,         // edge upper (near N)
+                neP2x,        neP2y,         // edge lower (near E)
+                cx + HW * PF, acy,           // inset E
                 tileDepth,
               );
             }
 
-            // Arm toward SE neighbour (col+1, row) — spans the E→S edge of this tile.
+            // Arm toward SE neighbour (col+1, row) — spans the middle PF of the E→S edge.
             if (col + 1 < world.cols && world.hasPath(col + 1, row)) {
+              const seP1x = cx + HW * (1 + PF) / 2, seP1y = acy + HH * (1 - PF) / 2;
+              const seP2x = cx + HW * (1 - PF) / 2, seP2y = acy + HH * (1 + PF) / 2;
               pi[pathType] = writeQuad(pBuf, pi[pathType]!,
-                cx + HW * PF, acy,          // inset E
-                cx + HW,      acy,          // full  E
-                cx,           acy + HH,     // full  S
+                cx + HW * PF, acy,           // inset E
+                seP1x,        seP1y,         // edge upper (near E)
+                seP2x,        seP2y,         // edge lower (near S)
                 cx,           acy + HH * PF, // inset S
                 tileDepth,
               );
             }
 
-            // Arm toward SW neighbour (col, row+1) — spans the W→S edge of this tile.
+            // Arm toward SW neighbour (col, row+1) — spans the middle PF of the W→S edge.
             if (row + 1 < world.rows && world.hasPath(col, row + 1)) {
+              const swP1x = cx - HW * (1 + PF) / 2, swP1y = acy + HH * (1 - PF) / 2;
+              const swP2x = cx - HW * (1 - PF) / 2, swP2y = acy + HH * (1 + PF) / 2;
               pi[pathType] = writeQuad(pBuf, pi[pathType]!,
-                cx - HW * PF, acy,          // inset W
-                cx - HW,      acy,          // full  W
-                cx,           acy + HH,     // full  S
+                cx - HW * PF, acy,           // inset W
+                swP1x,        swP1y,         // edge upper (near W)
+                swP2x,        swP2y,         // edge lower (near S)
                 cx,           acy + HH * PF, // inset S
                 tileDepth,
               );
