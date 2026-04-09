@@ -38,20 +38,28 @@ const FILL_FLOATS_PER_TILE = 24;
 
 type TilePalette = { border: Color; fill: Color };
 
+const GRASS_BASE: TilePalette = {
+  border: [0.18, 0.42, 0.07, 1.0],
+  fill:   [0.40, 0.72, 0.17, 1.0],
+};
+
+// All tile types share the same grass base; tree sprites are drawn on top.
 const PALETTE: Record<TileType, TilePalette> = {
-  [TileType.Grass]: {
-    border: [0.18, 0.42, 0.07, 1.0],
-    fill:   [0.40, 0.72, 0.17, 1.0],
-  },
-  // Tree tiles share the same grass base; the tree sprite is drawn on top.
-  [TileType.Tree]: {
-    border: [0.18, 0.42, 0.07, 1.0],
-    fill:   [0.40, 0.72, 0.17, 1.0],
-  },
+  [TileType.Grass]:      GRASS_BASE,
+  [TileType.TreeShort]:  GRASS_BASE,
+  [TileType.TreeMedium]: GRASS_BASE,
+  [TileType.TreeTall]:   GRASS_BASE,
 };
 
 const TREE_TRUNK:  Color = [0.45, 0.28, 0.05, 1.0];
 const TREE_CANOPY: Color = [0.13, 0.55, 0.07, 1.0];
+
+/** Visual dimensions for each tree style. */
+const TREE_STYLES: Partial<Record<TileType, { trunkH: number; hw: number; hh: number }>> = {
+  [TileType.TreeShort]:  { trunkH:  6, hw: 12, hh: 10 },
+  [TileType.TreeMedium]: { trunkH: 12, hw: 18, hh: 14 },
+  [TileType.TreeTall]:   { trunkH: 20, hw: 22, hh: 18 },
+};
 
 // ---------------------------------------------------------------------------
 // Geometry helpers
@@ -293,11 +301,12 @@ export class IsoRenderer {
         bi = writeDiamond(    this.borderVerts, bi, cx, cy, HW,         HH);
         fi = writeFillDiamond(this.fillVerts,   fi, cx, cy, HW * INSET, HH * INSET);
 
-        if (world.getTile(col, row) === TileType.Tree) {
-          // Trunk: 4 px wide, 12 px tall, rooted at the diamond centre.
-          ti = writeRect(this.treeTrunkVerts, ti, cx - 2, cy - 12, 4, 12);
+        const style = TREE_STYLES[world.getTile(col, row)];
+        if (style) {
+          // Trunk: 4 px wide, rooted at the diamond centre.
+          ti = writeRect(this.treeTrunkVerts, ti, cx - 2, cy - style.trunkH, 4, style.trunkH);
           // Canopy: diamond centered 14 px above the trunk top.
-          ci = writeDiamond(this.treeCanopyVerts, ci, cx, cy - 26, 18, 14);
+          ci = writeDiamond(this.treeCanopyVerts, ci, cx, cy - style.trunkH - 14, style.hw, style.hh);
         }
       }
     }

@@ -1,4 +1,6 @@
 export const enum TileType {
-  Grass = 0,
-  Tree  = 1,
+  Grass      = 0,
+  TreeShort  = 1,
+  TreeMedium = 2,
+  TreeTall   = 3,
 }

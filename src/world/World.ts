@@ -29,7 +29,15 @@ export class World {
 
     const rng = makeRng(0xdeadbeef);
     for (let i = 0; i < this.tiles.length; i++) {
-      if (rng() < TREE_DENSITY) this.tiles[i] = TileType.Tree;
+      if (rng() < TREE_DENSITY) {
+        // Pick one of the three tree styles with equal probability.
+        const r = rng();
+        this.tiles[i] = r < 0.33
+          ? TileType.TreeShort
+          : r < 0.66
+            ? TileType.TreeMedium
+            : TileType.TreeTall;
+      }
     }
   }
 
