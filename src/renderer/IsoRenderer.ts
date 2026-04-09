@@ -610,12 +610,12 @@ export class IsoRenderer {
             }
 
             // Corner caps — fill the small diamond gap at each tile vertex where
-            // two arms meet.  Each cap is drawn on the tile that owns that vertex.
-            // Without caps, a 2×2 block of path tiles would show a visible hole
-            // at the shared corner point.
+            // two arms meet AND the diagonal 4th tile also has a path (completing
+            // the 2×2 block).  Without the diagonal check, an L-shaped path would
+            // incorrectly fill the corner vertex gap.
 
-            // N vertex cap (NW + NE arms both present)
-            if (hasNW && hasNE) {
+            // N vertex cap (NW + NE arms both present, diagonal (col-1,row-1) has path)
+            if (hasNW && hasNE && col > 0 && row > 0 && world.hasPath(col - 1, row - 1)) {
               const capX = HW * (1 - PF) / 2;
               const capY = acy - HH * (1 + PF) / 2;
               pi[pathType] = writeQuad(pBuf, pi[pathType]!,
@@ -627,8 +627,8 @@ export class IsoRenderer {
               );
             }
 
-            // E vertex cap (NE + SE arms both present)
-            if (hasNE && hasSE) {
+            // E vertex cap (NE + SE arms both present, diagonal (col+1,row-1) has path)
+            if (hasNE && hasSE && col + 1 < world.cols && row > 0 && world.hasPath(col + 1, row - 1)) {
               const capY = HH * (1 - PF) / 2;
               const capX = cx + HW * (1 + PF) / 2;
               pi[pathType] = writeQuad(pBuf, pi[pathType]!,
@@ -640,8 +640,8 @@ export class IsoRenderer {
               );
             }
 
-            // S vertex cap (SE + SW arms both present)
-            if (hasSE && hasSW) {
+            // S vertex cap (SE + SW arms both present, diagonal (col+1,row+1) has path)
+            if (hasSE && hasSW && col + 1 < world.cols && row + 1 < world.rows && world.hasPath(col + 1, row + 1)) {
               const capX = HW * (1 - PF) / 2;
               const capY = acy + HH * (1 + PF) / 2;
               pi[pathType] = writeQuad(pBuf, pi[pathType]!,
@@ -653,8 +653,8 @@ export class IsoRenderer {
               );
             }
 
-            // W vertex cap (NW + SW arms both present)
-            if (hasNW && hasSW) {
+            // W vertex cap (NW + SW arms both present, diagonal (col-1,row+1) has path)
+            if (hasNW && hasSW && col > 0 && row + 1 < world.rows && world.hasPath(col - 1, row + 1)) {
               const capY = HH * (1 - PF) / 2;
               const capX = cx - HW * (1 + PF) / 2;
               pi[pathType] = writeQuad(pBuf, pi[pathType]!,
