@@ -1,16 +1,7 @@
 import { TileType } from './Tile';
 import { PathType } from './Path';
-import { makePerlin, fbm } from './perlinNoise';
-
 /** Fraction of tiles that start as trees. */
 const TREE_DENSITY = 0.2;
-
-/** Noise frequency: higher = more zoomed-in / broader hills. */
-const TERRAIN_SCALE = 0.04;
-/** Number of fbm octaves — more = more surface detail. */
-const TERRAIN_OCTAVES = 6;
-/** Maps the [-1, 1] fbm output to height units [-50, +50]. */
-const TERRAIN_AMPLITUDE = 20;
 
 function makeRng(seed: number): () => number {
   let s = seed >>> 0;
@@ -56,14 +47,6 @@ export class World {
       }
     }
 
-    // Heights — fractal Perlin noise for natural-looking terrain
-    const noise = makePerlin(0xcafebabe);
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        const v = fbm(noise, col * TERRAIN_SCALE, row * TERRAIN_SCALE, TERRAIN_OCTAVES);
-        this.setHeight(col, row, Math.round(v * TERRAIN_AMPLITUDE));
-      }
-    }
   }
 
   getTile(col: number, row: number): TileType {
