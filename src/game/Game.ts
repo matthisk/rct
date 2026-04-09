@@ -5,6 +5,8 @@ import { Camera } from '../camera/Camera';
 import { InputManager } from '../input/InputManager';
 import { MouseManager } from '../input/MouseManager';
 import { HeightTool } from '../tools/HeightTool';
+import { PathTool } from '../tools/PathTool';
+import { PathType } from '../world/Path';
 
 // 128×128 matches a real RCT1 scenario map.  At 64×32 px per tile the grid
 // spans ~8 192 × 4 096 px — well beyond the 1280×720 viewport in every
@@ -39,6 +41,9 @@ export class Game {
 
   private mouseManager: MouseManager;
   private heightTool:   HeightTool;
+  private pathTool:     PathTool;
+  /** Tile coord exposed by whichever tool is currently active. */
+  private hoveredTileRef: { hoveredTile: { col: number; row: number } | null };
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -62,15 +67,18 @@ export class Game {
 
     this.input = new InputManager();
 
-    this.heightTool = new HeightTool(
-      this.world,
-      () => this.isoRenderer.invalidate(),
-    );
+    const onWorldChange = () => this.isoRenderer.invalidate();
+
+    this.heightTool = new HeightTool(this.world, onWorldChange);
+    this.pathTool   = new PathTool(this.world, PathType.Concrete, onWorldChange);
+
     this.mouseManager = new MouseManager(
       canvas,
       (x, y) => this.isoRenderer.canvasToTile(x, y, this.camera.x, this.camera.y, this.camera.zoom),
       () => this.camera.zoom,
     );
+    // Default tool: height editing.
+    this.hoveredTileRef = this.heightTool;
     this.mouseManager.setTool(this.heightTool);
   }
 
@@ -100,6 +108,16 @@ export class Game {
   }
 
   private update(dt: number): void {
+    // Tool selection (1 = height, 2 = concrete path)
+    if (this.input.wasPressed('selectHeight')) {
+      this.mouseManager.setTool(this.heightTool);
+      this.hoveredTileRef = this.heightTool;
+    }
+    if (this.input.wasPressed('selectPath')) {
+      this.mouseManager.setTool(this.pathTool);
+      this.hoveredTileRef = this.pathTool;
+    }
+
     // Zoom (one-shot via wasPressed)
     if (this.input.wasPressed('zoomIn'))  this.camera.zoomIn();
     if (this.input.wasPressed('zoomOut')) this.camera.zoomOut();
@@ -118,7 +136,7 @@ export class Game {
     this.renderer.clear(SKY);
 
     // Sync hover highlight from the active tool.
-    const hov = this.heightTool.hoveredTile;
+    const hov = this.hoveredTileRef.hoveredTile;
     if (hov) this.isoRenderer.setHoveredTile(hov.col, hov.row);
     else      this.isoRenderer.clearHoveredTile();
 

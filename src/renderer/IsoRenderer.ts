@@ -2,6 +2,7 @@ import type { Color } from './Renderer';
 import { Renderer } from './Renderer';
 import { World } from '../world/World';
 import { TileType } from '../world/Tile';
+import { PathType } from '../world/Path';
 import { makeGrassCanvas } from './grassTexture';
 
 // ---------------------------------------------------------------------------
@@ -67,6 +68,28 @@ const TREE_TRUNK:  Color = [0.45, 0.28, 0.05, 1.0];
 const TREE_CANOPY: Color = [0.13, 0.55, 0.07, 1.0];
 const EARTH:       Color = [0.55, 0.37, 0.15, 1.0]; // brown cliff / earth side
 const HOVER_FILL:  Color = [1.00, 1.00, 0.30, 0.55]; // semi-transparent yellow highlight
+
+/**
+ * Fill colours for each path type.
+ *
+ * To add a new path type: add a PathType member and a matching entry here.
+ */
+const PATH_COLORS: Record<PathType, Color | null> = {
+  [PathType.None]:     null,
+  [PathType.Concrete]: [0.65, 0.63, 0.60, 1.0],
+};
+
+/**
+ * Fraction of the tile that the path centre diamond covers.
+ * Must be < 1 so the underlying grass border remains visible around the path.
+ */
+const PATH_SCALE = 0.65;
+
+/**
+ * Floats per tile in the path pass.
+ * Worst case: centre diamond (18) + 4 arm quads × 18 floats = 90.
+ */
+const PATH_FLOATS_PER_TILE = 5 * BORDER_FLOATS_PER_TILE; // 90
 
 /** Visual dimensions for each tree style. */
 const TREE_STYLES: Partial<Record<TileType, { trunkH: number; hw: number; hh: number }>> = {
@@ -257,6 +280,8 @@ export class IsoRenderer {
   private cliffVerts:      Float32Array;
   private treeTrunkVerts:  Float32Array;
   private treeCanopyVerts: Float32Array;
+  /** One buffer per path type (index = PathType value).  Index 0 (None) unused. */
+  private pathVerts: Float32Array[];
 
   // Vertex counts written into the buffers on the last rebuild.
   private borderVertexCount     = 0;
@@ -264,6 +289,7 @@ export class IsoRenderer {
   private cliffVertexCount      = 0;
   private treeTrunkVertexCount  = 0;
   private treeCanopyVertexCount = 0;
+  private pathVertexCounts: number[] = [];
 
   // Grass texture, created lazily on the first render() call.
   private grassTexture: WebGLTexture | null = null;
@@ -308,6 +334,11 @@ export class IsoRenderer {
     // Tree buffers: worst case every tile is a tree (2 triangles = 12 floats each).
     this.treeTrunkVerts  = new Float32Array(tileCount * BORDER_FLOATS_PER_TILE);
     this.treeCanopyVerts = new Float32Array(tileCount * BORDER_FLOATS_PER_TILE);
+    // Path buffers: one per PathType (index = enum value; index 0 = None, unused).
+    this.pathVerts        = Object.keys(PATH_COLORS).map(() =>
+      new Float32Array(tileCount * PATH_FLOATS_PER_TILE),
+    );
+    this.pathVertexCounts = Object.keys(PATH_COLORS).map(() => 0);
   }
 
   /**
@@ -403,6 +434,16 @@ export class IsoRenderer {
     renderer.drawTriangles(this.borderVerts,     this.borderVertexCount,     PALETTE[TileType.Grass].border);
     renderer.drawTexturedTriangles(this.fillVerts, this.fillVertexCount, this.grassTexture);
     renderer.drawTriangles(this.cliffVerts,      this.cliffVertexCount,      EARTH);
+
+    // Path surfaces — one draw call per path type that has geometry this frame.
+    for (let pt = 1; pt < this.pathVerts.length; pt++) {
+      const count = this.pathVertexCounts[pt] ?? 0;
+      if (count > 0) {
+        const color = PATH_COLORS[pt as PathType];
+        if (color) renderer.drawTriangles(this.pathVerts[pt]!, count, color);
+      }
+    }
+
     renderer.drawTriangles(this.treeTrunkVerts,  this.treeTrunkVertexCount,  TREE_TRUNK);
     renderer.drawTriangles(this.treeCanopyVerts, this.treeCanopyVertexCount, TREE_CANOPY);
 
@@ -425,6 +466,9 @@ export class IsoRenderer {
     let ki = 0; // cliff buffer cursor  (3 floats/vertex)
     let ti = 0; // trunk buffer cursor  (3 floats/vertex)
     let ci = 0; // canopy buffer cursor (3 floats/vertex)
+
+    // Path cursors — one per PathType entry (index 0 = None, always 0).
+    const pi: number[] = this.pathVerts.map(() => 0);
 
     const maxDepth = this.worldCols + this.worldRows;
 
@@ -493,6 +537,62 @@ export class IsoRenderer {
           ti = writeRect(   this.treeTrunkVerts,  ti, cx - 2, acy - style.trunkH, 4, style.trunkH, treeDepth);
           ci = writeDiamond(this.treeCanopyVerts, ci, cx, acy - style.trunkH - 14, style.hw, style.hh, treeDepth);
         }
+
+        // Path surface — drawn between cliff faces and tree sprites.
+        const pathType = world.getPath(col, row);
+        if (pathType !== PathType.None) {
+          const pBuf = this.pathVerts[pathType];
+          if (pBuf) {
+            const PF = PATH_SCALE;
+
+            // Centre diamond (inset so the surrounding grass border stays visible).
+            pi[pathType] = writeDiamond(pBuf, pi[pathType]!, cx, acy, HW * PF, HH * PF, tileDepth);
+
+            // Arm toward NW neighbour (col−1, row) — spans the N→W edge of this tile.
+            if (col > 0 && world.hasPath(col - 1, row)) {
+              pi[pathType] = writeQuad(pBuf, pi[pathType]!,
+                cx,          acy - HH * PF, // inset N
+                cx,          acy - HH,      // full  N
+                cx - HW,     acy,           // full  W
+                cx - HW * PF, acy,          // inset W
+                tileDepth,
+              );
+            }
+
+            // Arm toward NE neighbour (col, row−1) — spans the N→E edge of this tile.
+            if (row > 0 && world.hasPath(col, row - 1)) {
+              pi[pathType] = writeQuad(pBuf, pi[pathType]!,
+                cx,          acy - HH * PF, // inset N
+                cx,          acy - HH,      // full  N
+                cx + HW,     acy,           // full  E
+                cx + HW * PF, acy,          // inset E
+                tileDepth,
+              );
+            }
+
+            // Arm toward SE neighbour (col+1, row) — spans the E→S edge of this tile.
+            if (col + 1 < world.cols && world.hasPath(col + 1, row)) {
+              pi[pathType] = writeQuad(pBuf, pi[pathType]!,
+                cx + HW * PF, acy,          // inset E
+                cx + HW,      acy,          // full  E
+                cx,           acy + HH,     // full  S
+                cx,           acy + HH * PF, // inset S
+                tileDepth,
+              );
+            }
+
+            // Arm toward SW neighbour (col, row+1) — spans the W→S edge of this tile.
+            if (row + 1 < world.rows && world.hasPath(col, row + 1)) {
+              pi[pathType] = writeQuad(pBuf, pi[pathType]!,
+                cx - HW * PF, acy,          // inset W
+                cx - HW,      acy,          // full  W
+                cx,           acy + HH,     // full  S
+                cx,           acy + HH * PF, // inset S
+                tileDepth,
+              );
+            }
+          }
+        }
       }
     }
 
@@ -501,5 +601,8 @@ export class IsoRenderer {
     this.cliffVertexCount      = ki / 3;
     this.treeTrunkVertexCount  = ti / 3;
     this.treeCanopyVertexCount = ci / 3;
+    for (let pt = 1; pt < this.pathVerts.length; pt++) {
+      this.pathVertexCounts[pt] = (pi[pt] ?? 0) / 3;
+    }
   }
 }

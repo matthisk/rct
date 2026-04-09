@@ -1,4 +1,5 @@
 import { TileType } from './Tile';
+import { PathType } from './Path';
 import { makePerlin, fbm } from './perlinNoise';
 
 /** Fraction of tiles that start as trees. */
@@ -33,12 +34,14 @@ export class World {
   readonly rows: number;
   private tiles: Uint8Array;
   private heights: Int16Array;
+  private paths: Uint8Array;
 
   constructor(cols: number, rows: number) {
     this.cols = cols;
     this.rows = rows;
     this.tiles = new Uint8Array(cols * rows);
     this.heights = new Int16Array(cols * rows);
+    this.paths = new Uint8Array(cols * rows);
 
     // Tile types
     const rng = makeRng(0xdeadbeef);
@@ -79,5 +82,20 @@ export class World {
   /** Set height at (col, row), clamped to [-50, +50]. */
   setHeight(col: number, row: number, height: number): void {
     this.heights[row * this.cols + col] = Math.max(-50, Math.min(50, height));
+  }
+
+  /** Return the path type on (col, row).  PathType.None = no path. */
+  getPath(col: number, row: number): PathType {
+    return this.paths[row * this.cols + col] as PathType;
+  }
+
+  /** Place or remove a path on (col, row). */
+  setPath(col: number, row: number, type: PathType): void {
+    this.paths[row * this.cols + col] = type;
+  }
+
+  /** True if (col, row) carries any path surface. */
+  hasPath(col: number, row: number): boolean {
+    return this.paths[row * this.cols + col] !== PathType.None;
   }
 }

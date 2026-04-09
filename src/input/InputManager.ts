@@ -11,7 +11,9 @@ export type Action =
   | 'panUp'
   | 'panDown'
   | 'zoomIn'
-  | 'zoomOut';
+  | 'zoomOut'
+  | 'selectHeight'
+  | 'selectPath';
 
 // ---------------------------------------------------------------------------
 // Default bindings
@@ -23,12 +25,14 @@ export type Action =
 export type Bindings = Partial<Record<Action, string | string[]>>;
 
 const DEFAULT_BINDINGS: Record<Action, string[]> = {
-  panLeft:  ['ArrowLeft'],
-  panRight: ['ArrowRight'],
-  panUp:    ['ArrowUp'],
-  panDown:  ['ArrowDown'],
-  zoomIn:   ['Equal', 'NumpadAdd'],      // = / + key (with or without shift)
-  zoomOut:  ['Minus', 'NumpadSubtract'],
+  panLeft:      ['ArrowLeft'],
+  panRight:     ['ArrowRight'],
+  panUp:        ['ArrowUp'],
+  panDown:      ['ArrowDown'],
+  zoomIn:       ['Equal', 'NumpadAdd'],      // = / + key (with or without shift)
+  zoomOut:      ['Minus', 'NumpadSubtract'],
+  selectHeight: ['Digit1'],
+  selectPath:   ['Digit2'],
 };
 
 // ---------------------------------------------------------------------------
