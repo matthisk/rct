@@ -87,9 +87,9 @@ const PATH_SCALE = 0.65;
 
 /**
  * Floats per tile in the path pass.
- * Worst case: centre diamond (18) + 4 arm quads × 18 floats = 90.
+ * Worst case: centre diamond (18) + 4 arm quads × 18 + 4 corner caps × 18 = 162.
  */
-const PATH_FLOATS_PER_TILE = 5 * BORDER_FLOATS_PER_TILE; // 90
+const PATH_FLOATS_PER_TILE = 9 * BORDER_FLOATS_PER_TILE; // 162
 
 /** Visual dimensions for each tree style. */
 const TREE_STYLES: Partial<Record<TileType, { trunkH: number; hw: number; hh: number }>> = {
@@ -545,13 +545,19 @@ export class IsoRenderer {
           if (pBuf) {
             const PF = PATH_SCALE;
 
+            // Precompute which arms are present for reuse in corner caps.
+            const hasNW = col > 0           && world.hasPath(col - 1, row);
+            const hasNE = row > 0           && world.hasPath(col,     row - 1);
+            const hasSE = col + 1 < world.cols && world.hasPath(col + 1, row);
+            const hasSW = row + 1 < world.rows && world.hasPath(col,     row + 1);
+
             // Centre diamond (inset so the surrounding grass border stays visible).
             pi[pathType] = writeDiamond(pBuf, pi[pathType]!, cx, acy, HW * PF, HH * PF, tileDepth);
 
             // Arm toward NW neighbour (col−1, row) — spans the middle PF of the N→W edge.
             // The arm only covers the central PF-fraction of the shared edge so the
             // border grass remains visible at both ends of the connection.
-            if (col > 0 && world.hasPath(col - 1, row)) {
+            if (hasNW) {
               // Edge N→W parameterised 0→1; take the middle PF band.
               const nwP1x = cx - HW * (1 - PF) / 2, nwP1y = acy - HH * (1 + PF) / 2;
               const nwP2x = cx - HW * (1 + PF) / 2, nwP2y = acy - HH * (1 - PF) / 2;
@@ -565,7 +571,7 @@ export class IsoRenderer {
             }
 
             // Arm toward NE neighbour (col, row−1) — spans the middle PF of the N→E edge.
-            if (row > 0 && world.hasPath(col, row - 1)) {
+            if (hasNE) {
               const neP1x = cx + HW * (1 - PF) / 2, neP1y = acy - HH * (1 + PF) / 2;
               const neP2x = cx + HW * (1 + PF) / 2, neP2y = acy - HH * (1 - PF) / 2;
               pi[pathType] = writeQuad(pBuf, pi[pathType]!,
@@ -578,7 +584,7 @@ export class IsoRenderer {
             }
 
             // Arm toward SE neighbour (col+1, row) — spans the middle PF of the E→S edge.
-            if (col + 1 < world.cols && world.hasPath(col + 1, row)) {
+            if (hasSE) {
               const seP1x = cx + HW * (1 + PF) / 2, seP1y = acy + HH * (1 - PF) / 2;
               const seP2x = cx + HW * (1 - PF) / 2, seP2y = acy + HH * (1 + PF) / 2;
               pi[pathType] = writeQuad(pBuf, pi[pathType]!,
@@ -591,7 +597,7 @@ export class IsoRenderer {
             }
 
             // Arm toward SW neighbour (col, row+1) — spans the middle PF of the W→S edge.
-            if (row + 1 < world.rows && world.hasPath(col, row + 1)) {
+            if (hasSW) {
               const swP1x = cx - HW * (1 + PF) / 2, swP1y = acy + HH * (1 - PF) / 2;
               const swP2x = cx - HW * (1 - PF) / 2, swP2y = acy + HH * (1 + PF) / 2;
               pi[pathType] = writeQuad(pBuf, pi[pathType]!,
@@ -599,6 +605,63 @@ export class IsoRenderer {
                 swP1x,        swP1y,         // edge upper (near W)
                 swP2x,        swP2y,         // edge lower (near S)
                 cx,           acy + HH * PF, // inset S
+                tileDepth,
+              );
+            }
+
+            // Corner caps — fill the small diamond gap at each tile vertex where
+            // two arms meet.  Each cap is drawn on the tile that owns that vertex.
+            // Without caps, a 2×2 block of path tiles would show a visible hole
+            // at the shared corner point.
+
+            // N vertex cap (NW + NE arms both present)
+            if (hasNW && hasNE) {
+              const capX = HW * (1 - PF) / 2;
+              const capY = acy - HH * (1 + PF) / 2;
+              pi[pathType] = writeQuad(pBuf, pi[pathType]!,
+                cx,           acy - HH,      // N_full  (TL)
+                cx + capX,    capY,           // p1_NE   (TR)
+                cx,           acy - HH * PF, // inset_N (BR)
+                cx - capX,    capY,           // p1_NW   (BL)
+                tileDepth,
+              );
+            }
+
+            // E vertex cap (NE + SE arms both present)
+            if (hasNE && hasSE) {
+              const capY = HH * (1 - PF) / 2;
+              const capX = cx + HW * (1 + PF) / 2;
+              pi[pathType] = writeQuad(pBuf, pi[pathType]!,
+                capX,         acy - capY,    // p2_NE   (TL)
+                cx + HW,      acy,           // E_full  (TR)
+                capX,         acy + capY,    // p1_SE   (BR)
+                cx + HW * PF, acy,           // inset_E (BL)
+                tileDepth,
+              );
+            }
+
+            // S vertex cap (SE + SW arms both present)
+            if (hasSE && hasSW) {
+              const capX = HW * (1 - PF) / 2;
+              const capY = acy + HH * (1 + PF) / 2;
+              pi[pathType] = writeQuad(pBuf, pi[pathType]!,
+                cx,           acy + HH * PF, // inset_S (TL)
+                cx + capX,    capY,           // p2_SE   (TR)
+                cx,           acy + HH,      // S_full  (BR)
+                cx - capX,    capY,           // p2_SW   (BL)
+                tileDepth,
+              );
+            }
+
+            // W vertex cap (NW + SW arms both present)
+            if (hasNW && hasSW) {
+              const capY = HH * (1 - PF) / 2;
+              const capX = cx - HW * (1 + PF) / 2;
+              pi[pathType] = writeQuad(pBuf, pi[pathType]!,
+                capX,         acy - capY,    // p2_NW   (TL)
+                cx - HW * PF, acy,           // inset_W (TR)
+                capX,         acy + capY,    // p1_SW   (BR)
+                cx - HW,      acy,           // W_full  (BL)
                 tileDepth,
               );
             }
