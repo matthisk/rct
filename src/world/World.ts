@@ -1,5 +1,4 @@
 import { TileType } from './Tile';
-import { makePerlin, fbm } from './perlinNoise';
 
 /** Fraction of tiles that start as trees. */
 const TREE_DENSITY = 0.2;
@@ -32,16 +31,6 @@ export class World {
     this.rows = rows;
     this.tiles = new Uint8Array(cols * rows);
     this.heights = new Int16Array(cols * rows);
-
-    // Height map: 4-octave Perlin fBm → natural-looking terrain in [-10, +10]
-    const noise = makePerlin(0xdecafbad);
-    const SCALE = 0.07; // world units per tile — larger = steeper, more frequent hills
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const n = fbm(noise, c * SCALE, r * SCALE, 4);
-        this.heights[r * cols + c] = Math.round(n * 50);
-      }
-    }
 
     // Tile types
     const rng = makeRng(0xdeadbeef);
