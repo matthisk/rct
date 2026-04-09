@@ -1,4 +1,5 @@
 import { TileType } from './Tile';
+import { makePerlin, fbm } from './perlinNoise';
 
 /** Fraction of tiles that start as trees. */
 const TREE_DENSITY = 0.2;
@@ -32,14 +33,13 @@ export class World {
     this.tiles = new Uint8Array(cols * rows);
     this.heights = new Int8Array(cols * rows);
 
-    // Height map: sum of sine waves → steep rolling terrain, range ≈ ±10
+    // Height map: 4-octave Perlin fBm → natural-looking terrain in [-10, +10]
+    const noise = makePerlin(0xdecafbad);
+    const SCALE = 0.035; // world units per tile — larger = broader hills
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        const h =
-          Math.sin(c * 0.20 + 0.50) * 5.0 +
-          Math.cos(r * 0.18 + 1.20) * 5.0 +
-          Math.sin((c + r) * 0.12 + 0.80) * 3.0;
-        this.heights[r * cols + c] = Math.max(-10, Math.min(10, Math.round(h)));
+        const n = fbm(noise, c * SCALE, r * SCALE, 4);
+        this.heights[r * cols + c] = Math.round(n * 10);
       }
     }
 
