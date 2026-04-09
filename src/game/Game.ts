@@ -3,6 +3,8 @@ import { IsoRenderer } from '../renderer/IsoRenderer';
 import { World } from '../world/World';
 import { Camera } from '../camera/Camera';
 import { InputManager } from '../input/InputManager';
+import { MouseManager } from '../input/MouseManager';
+import { HeightTool } from '../tools/HeightTool';
 
 // 128×128 matches a real RCT1 scenario map.  At 64×32 px per tile the grid
 // spans ~8 192 × 4 096 px — well beyond the 1280×720 viewport in every
@@ -35,6 +37,9 @@ export class Game {
   private rafId:    number = 0;
   private lastTime: number = 0;
 
+  private mouseManager: MouseManager;
+  private heightTool:   HeightTool;
+
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
 
@@ -56,6 +61,17 @@ export class Game {
     );
 
     this.input = new InputManager();
+
+    this.heightTool = new HeightTool(
+      this.world,
+      () => this.isoRenderer.invalidate(),
+    );
+    this.mouseManager = new MouseManager(
+      canvas,
+      (x, y) => this.isoRenderer.canvasToTile(x, y, this.camera.x, this.camera.y, this.camera.zoom),
+      () => this.camera.zoom,
+    );
+    this.mouseManager.setTool(this.heightTool);
   }
 
   start(): void {
@@ -65,6 +81,7 @@ export class Game {
   stop(): void {
     cancelAnimationFrame(this.rafId);
     this.input.destroy();
+    this.mouseManager.destroy();
   }
 
   // -------------------------------------------------------------------------
@@ -99,6 +116,11 @@ export class Game {
 
   private render(): void {
     this.renderer.clear(SKY);
+
+    // Sync hover highlight from the active tool.
+    const hov = this.heightTool.hoveredTile;
+    if (hov) this.isoRenderer.setHoveredTile(hov.col, hov.row);
+    else      this.isoRenderer.clearHoveredTile();
 
     // Apply camera transform — offset then zoom — before the world draw.
     // Reset both to identity afterwards so future UI draws are unaffected.

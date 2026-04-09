@@ -141,6 +141,10 @@ export class Renderer {
     gl.useProgram(this.program);
 
     gl.viewport(0, 0, this.width, this.height);
+
+    // Standard pre-multiplied alpha blending — required for hover highlight overlay.
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   }
 
   /**

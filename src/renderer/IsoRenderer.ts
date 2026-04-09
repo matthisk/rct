@@ -66,6 +66,7 @@ const PALETTE: Record<TileType, TilePalette> = {
 const TREE_TRUNK:  Color = [0.45, 0.28, 0.05, 1.0];
 const TREE_CANOPY: Color = [0.13, 0.55, 0.07, 1.0];
 const EARTH:       Color = [0.55, 0.37, 0.15, 1.0]; // brown cliff / earth side
+const HOVER_FILL:  Color = [1.00, 1.00, 0.30, 0.55]; // semi-transparent yellow highlight
 
 /** Visual dimensions for each tree style. */
 const TREE_STYLES: Partial<Record<TileType, { trunkH: number; hw: number; hh: number }>> = {
@@ -208,8 +209,15 @@ export class IsoRenderer {
   readonly originX: number;
   readonly originY: number;
 
+  private readonly canvasWidth:  number;
+  private readonly canvasHeight: number;
   private readonly worldCols: number;
   private readonly worldRows: number;
+
+  // Hover-highlight state (set each frame by Game before render).
+  private hoverCol = -1;
+  private hoverRow = -1;
+  private readonly hoverVerts = new Float32Array(12); // one diamond, 6 vertices
 
   // Pre-allocated geometry buffers — one per pass, sized for the whole world.
   private borderVerts:     Float32Array;
@@ -237,6 +245,8 @@ export class IsoRenderer {
     worldCols: number,
     worldRows: number,
   ) {
+    this.canvasWidth  = canvasWidth;
+    this.canvasHeight = canvasHeight;
     this.worldCols = worldCols;
     this.worldRows = worldRows;
 
@@ -298,6 +308,48 @@ export class IsoRenderer {
   }
 
   /**
+   * Convert a canvas-pixel position to a grid tile coordinate.
+   *
+   * Uses the inverse isometric formula on a flat (height-0) grid — accurate
+   * enough for pointer input on moderately sloped terrain.
+   *
+   * Returns null when the position is outside the grid bounds.
+   */
+  canvasToTile(
+    canvasX: number, canvasY: number,
+    cameraX: number, cameraY: number,
+    zoom: number,
+  ): { col: number; row: number } | null {
+    // Undo the shader transform: screenPos = (worldPos − offset − centre)×zoom + centre
+    // ⟹  worldPos = (screenPos − centre)/zoom + centre + offset
+    const cx = this.canvasWidth  / 2;
+    const cy = this.canvasHeight / 2;
+    const wx = (canvasX - cx) / zoom + cx + cameraX;
+    const wy = (canvasY - cy) / zoom + cy + cameraY;
+
+    // Inverse isometric: tile centre is at (originX + (col−row)×HW,  originY+HH + (col+row)×HH)
+    const a = (wx - this.originX)        / HW; // col − row
+    const b = (wy - this.originY - HH)   / HH; // col + row
+
+    const col = Math.round((a + b) / 2);
+    const row = Math.round((b - a) / 2);
+
+    if (col < 0 || col >= this.worldCols || row < 0 || row >= this.worldRows) return null;
+    return { col, row };
+  }
+
+  /** Highlight the tile at (col, row) on the next render. */
+  setHoveredTile(col: number, row: number): void {
+    this.hoverCol = col;
+    this.hoverRow = row;
+  }
+
+  /** Remove the tile highlight. */
+  clearHoveredTile(): void {
+    this.hoverCol = -1;
+  }
+
+  /**
    * Render the entire world.
    *
    * Geometry is rebuilt only when `dirty` (world changed).
@@ -321,6 +373,14 @@ export class IsoRenderer {
     renderer.drawTriangles(this.cliffVerts,      this.cliffVertexCount,      EARTH);
     renderer.drawTriangles(this.treeTrunkVerts,  this.treeTrunkVertexCount,  TREE_TRUNK);
     renderer.drawTriangles(this.treeCanopyVerts, this.treeCanopyVertexCount, TREE_CANOPY);
+
+    // Hover highlight — semi-transparent fill drawn last so it sits on top.
+    if (this.hoverCol >= 0) {
+      const { sx, sy } = this.tileToScreen(this.hoverCol, this.hoverRow);
+      const hcy = sy + HH - world.getHeight(this.hoverCol, this.hoverRow) * HEIGHT_STEP;
+      writeDiamond(this.hoverVerts, 0, sx, hcy, HW * INSET, HH * INSET);
+      renderer.drawTriangles(this.hoverVerts, 6, HOVER_FILL);
+    }
   }
 
   // -------------------------------------------------------------------------

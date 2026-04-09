@@ -54,8 +54,13 @@ export class World {
     this.tiles[row * this.cols + col] = type;
   }
 
-  /** Height at (col, row) in range [-10, +10]. 0 = ground level. */
+  /** Height at (col, row) in range [-50, +50]. 0 = ground level. */
   getHeight(col: number, row: number): number {
     return this.heights[row * this.cols + col]!;
+  }
+
+  /** Set height at (col, row), clamped to [-50, +50]. */
+  setHeight(col: number, row: number, height: number): void {
+    this.heights[row * this.cols + col] = Math.max(-50, Math.min(50, height));
   }
 }
