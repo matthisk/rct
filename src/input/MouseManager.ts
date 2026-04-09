@@ -21,6 +21,16 @@ export class MouseManager {
     private readonly tileFromCanvas: (x: number, y: number) => TileCoord | null,
     /** Returns the current camera zoom (used to populate ToolContext.zoom). */
     private readonly getZoom: () => number,
+    /**
+     * Optional guard predicate.  When it returns true for a canvas-pixel
+     * position, mouse events at that position are NOT forwarded to the active
+     * tool.  Use this to prevent the world tools from responding to clicks
+     * that land on UI elements such as the toolbar.
+     *
+     * mouseup is always forwarded (so drag operations can be cleanly
+     * terminated even when the pointer is released over a UI element).
+     */
+    private readonly guard?: (x: number, y: number) => boolean,
   ) {
     canvas.addEventListener('mousemove',  this.handleMove);
     canvas.addEventListener('mousedown',  this.handleDown);
@@ -55,11 +65,25 @@ export class MouseManager {
     return { canvasX: x, canvasY: y, tile: this.tileFromCanvas(x, y), zoom: this.getZoom() };
   }
 
-  private readonly handleMove  = (e: MouseEvent) => this.tool?.onMove?.(this.buildContext(e));
-  private readonly handleDown  = (e: MouseEvent) => {
+  private isGuarded(e: MouseEvent): boolean {
+    if (!this.guard) return false;
+    const rect = this.canvas.getBoundingClientRect();
+    return this.guard(e.clientX - rect.left, e.clientY - rect.top);
+  }
+
+  private readonly handleMove = (e: MouseEvent) => {
+    if (this.isGuarded(e)) { this.tool?.onLeave?.(); return; }
+    this.tool?.onMove?.(this.buildContext(e));
+  };
+
+  private readonly handleDown = (e: MouseEvent) => {
     e.preventDefault(); // prevent text-selection drag
+    if (this.isGuarded(e)) return;
     this.tool?.onDown?.(this.buildContext(e));
   };
+
+  // mouseup is always dispatched (not guarded) so drag operations terminate
+  // cleanly even when the pointer is released over a UI element.
   private readonly handleUp    = (e: MouseEvent) => this.tool?.onUp?.(this.buildContext(e));
   private readonly handleLeave = () => this.tool?.onLeave?.();
 }

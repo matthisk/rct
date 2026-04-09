@@ -291,6 +291,24 @@ export class Renderer {
   }
 
   /**
+   * Draw a filled axis-aligned rectangle without depth testing.
+   *
+   * Use this for UI elements (toolbar, HUD) that must always appear on top of
+   * the world geometry.  The camera offset and zoom must be reset to identity
+   * before calling so that coordinates are in screen space.
+   */
+  drawRectFlat(x: number, y: number, width: number, height: number, color: Color): void {
+    const x1 = x, x2 = x + width;
+    const y1 = y, y2 = y + height;
+    // 2 floats per vertex (no depth component) — matches drawTrianglesFlat layout
+    const data = new Float32Array([
+      x1, y1,  x2, y1,  x1, y2,
+      x1, y2,  x2, y1,  x2, y2,
+    ]);
+    this.drawTrianglesFlat(data, 6, color);
+  }
+
+  /**
    * Like drawTriangles but depth-testing is disabled.  Used for UI overlays
    * (e.g. hover highlight) that must always render on top.
    *

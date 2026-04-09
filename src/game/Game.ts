@@ -7,6 +7,8 @@ import { MouseManager } from '../input/MouseManager';
 import { HeightTool } from '../tools/HeightTool';
 import { PathTool } from '../tools/PathTool';
 import { PathType } from '../world/Path';
+import { Toolbar } from '../ui/Toolbar';
+import { drawZoomIn, drawZoomOut } from '../ui/icons';
 
 // 128×128 matches a real RCT1 scenario map.  At 64×32 px per tile the grid
 // spans ~8 192 × 4 096 px — well beyond the 1280×720 viewport in every
@@ -45,6 +47,8 @@ export class Game {
   /** Tile coord exposed by whichever tool is currently active. */
   private hoveredTileRef: { hoveredTile: { col: number; row: number } | null };
 
+  private toolbar: Toolbar;
+
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
 
@@ -72,10 +76,25 @@ export class Game {
     this.heightTool = new HeightTool(this.world, onWorldChange);
     this.pathTool   = new PathTool(this.world, PathType.Concrete, onWorldChange);
 
+    // Toolbar — must be created before MouseManager so its listeners are
+    // registered first (button presses also call e.stopPropagation()).
+    this.toolbar = new Toolbar(canvas);
+    this.toolbar.addButton({
+      drawIcon: (r, x, y, size) => drawZoomIn(r, x, y, size),
+      onClick:  () => this.camera.zoomIn(),
+      tooltip:  'Zoom in',
+    });
+    this.toolbar.addButton({
+      drawIcon: (r, x, y, size) => drawZoomOut(r, x, y, size),
+      onClick:  () => this.camera.zoomOut(),
+      tooltip:  'Zoom out',
+    });
+
     this.mouseManager = new MouseManager(
       canvas,
       (x, y) => this.isoRenderer.canvasToTile(x, y, this.camera.x, this.camera.y, this.camera.zoom),
       () => this.camera.zoom,
+      (x, y) => this.toolbar.isHit(x, y),
     );
     // Default tool: height editing.
     this.hoveredTileRef = this.heightTool;
@@ -90,6 +109,7 @@ export class Game {
     cancelAnimationFrame(this.rafId);
     this.input.destroy();
     this.mouseManager.destroy();
+    this.toolbar.destroy();
   }
 
   // -------------------------------------------------------------------------
@@ -147,5 +167,8 @@ export class Game {
     this.isoRenderer.render(this.world, this.renderer);
     this.renderer.setOffset(0, 0);
     this.renderer.setZoom(1.0);
+
+    // Toolbar is drawn last so it always appears on top of the world view.
+    this.toolbar.render(this.renderer);
   }
 }
