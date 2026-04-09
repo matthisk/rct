@@ -18,20 +18,20 @@ function makeRng(seed: number): () => number {
  * Coordinates use (col, row) where (0,0) is the top-left of the grid.
  * Tiles and heights are stored as flat typed arrays for cache-friendliness.
  *
- * Height values range from -10 (deep valley) to +10 (tall hill).
+ * Height values range from -50 (deep valley) to +50 (tall hill).
  * Height 0 = ground level.
  */
 export class World {
   readonly cols: number;
   readonly rows: number;
   private tiles: Uint8Array;
-  private heights: Int8Array;
+  private heights: Int16Array;
 
   constructor(cols: number, rows: number) {
     this.cols = cols;
     this.rows = rows;
     this.tiles = new Uint8Array(cols * rows);
-    this.heights = new Int8Array(cols * rows);
+    this.heights = new Int16Array(cols * rows);
 
     // Height map: 4-octave Perlin fBm → natural-looking terrain in [-10, +10]
     const noise = makePerlin(0xdecafbad);
@@ -39,7 +39,7 @@ export class World {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const n = fbm(noise, c * SCALE, r * SCALE, 4);
-        this.heights[r * cols + c] = Math.round(n * 10);
+        this.heights[r * cols + c] = Math.round(n * 50);
       }
     }
 

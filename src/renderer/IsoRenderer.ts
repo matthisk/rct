@@ -27,7 +27,7 @@ const INSET = 0.82;
 const HEIGHT_STEP = 4;
 
 /** Maximum height value — used to size the cliff buffer. */
-const MAX_HEIGHT = 10;
+const MAX_HEIGHT = 50;
 
 /** Floats per tile in the border pass: 2 triangles × 3 vertices × 2 coords. */
 const BORDER_FLOATS_PER_TILE = 12;
