@@ -23,22 +23,22 @@ function makeRng(seed: number): () => number {
 export class World {
   readonly cols: number;
   readonly rows: number;
-  private tiles:   Uint8Array;
+  private tiles: Uint8Array;
   private heights: Int8Array;
 
   constructor(cols: number, rows: number) {
     this.cols = cols;
     this.rows = rows;
-    this.tiles   = new Uint8Array(cols * rows);
+    this.tiles = new Uint8Array(cols * rows);
     this.heights = new Int8Array(cols * rows);
 
-    // Height map: sum of sine waves → smooth rolling terrain, range ≈ ±8
+    // Height map: sum of sine waves → steep rolling terrain, range ≈ ±10
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const h =
-          Math.sin(c * 0.10 + 0.50) * 3.5 +
-          Math.cos(r * 0.09 + 1.20) * 3.5 +
-          Math.sin((c + r) * 0.06 + 0.80) * 2.0;
+          Math.sin(c * 0.20 + 0.50) * 5.0 +
+          Math.cos(r * 0.18 + 1.20) * 5.0 +
+          Math.sin((c + r) * 0.12 + 0.80) * 3.0;
         this.heights[r * cols + c] = Math.max(-10, Math.min(10, Math.round(h)));
       }
     }
