@@ -13,7 +13,8 @@ export type Action =
   | 'zoomIn'
   | 'zoomOut'
   | 'selectHeight'
-  | 'selectPath';
+  | 'selectPath'
+  | 'selectAttraction';
 
 // ---------------------------------------------------------------------------
 // Default bindings
@@ -31,8 +32,9 @@ const DEFAULT_BINDINGS: Record<Action, string[]> = {
   panDown:      ['ArrowDown'],
   zoomIn:       ['Equal', 'NumpadAdd'],      // = / + key (with or without shift)
   zoomOut:      ['Minus', 'NumpadSubtract'],
-  selectHeight: ['Digit1'],
-  selectPath:   ['Digit2'],
+  selectHeight:     ['Digit1'],
+  selectPath:       ['Digit2'],
+  selectAttraction: ['Digit3'],
 };
 
 // ---------------------------------------------------------------------------

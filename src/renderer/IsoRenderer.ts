@@ -3,6 +3,7 @@ import { Renderer } from './Renderer';
 import { World } from '../world/World';
 import { TileType } from '../world/Tile';
 import { PathType } from '../world/Path';
+import { AttractionType } from '../world/Attraction';
 import { makeGrassCanvas } from './grassTexture';
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,15 @@ const TREE_TRUNK:  Color = [0.45, 0.28, 0.05, 1.0];
 const TREE_CANOPY: Color = [0.13, 0.55, 0.07, 1.0];
 const EARTH:       Color = [0.55, 0.37, 0.15, 1.0]; // brown cliff / earth side
 const HOVER_FILL:  Color = [1.00, 1.00, 0.30, 0.55]; // semi-transparent yellow highlight
+
+// Footprint hover highlight colors
+const FOOTPRINT_VALID:   Color = [0.20, 0.90, 0.20, 0.50]; // green
+const FOOTPRINT_INVALID: Color = [0.90, 0.20, 0.20, 0.50]; // red
+
+// Carousel placeholder colors
+const CAROUSEL_BASE:     Color = [0.80, 0.78, 0.72, 1.0]; // light concrete base
+const CAROUSEL_BODY:     Color = [0.85, 0.25, 0.75, 1.0]; // magenta ride body
+const CAROUSEL_SPIRE:    Color = [1.00, 0.82, 0.10, 1.0]; // golden spire
 
 /**
  * Fill colours for each path type.
@@ -269,10 +279,19 @@ export class IsoRenderer {
   private readonly worldCols: number;
   private readonly worldRows: number;
 
-  // Hover-highlight state (set each frame by Game before render).
+  // Single-tile hover-highlight state.
   private hoverCol = -1;
   private hoverRow = -1;
   private readonly hoverVerts = new Float32Array(12); // one diamond, 6 vertices
+
+  // Multi-tile footprint hover-highlight state (for attraction placement preview).
+  private hoverFootprintActive = false;
+  private hoverFootprintCol    = 0;
+  private hoverFootprintRow    = 0;
+  private hoverFootprintSize   = 1;
+  private hoverFootprintValid  = false;
+  /** Pre-allocated for a 3×3 = 9-tile footprint (9 × 12 floats). */
+  private readonly hoverFootprintVerts = new Float32Array(9 * 12);
 
   // Pre-allocated geometry buffers — one per pass, sized for the whole world.
   private borderVerts:     Float32Array;
@@ -283,13 +302,21 @@ export class IsoRenderer {
   /** One buffer per path type (index = PathType value).  Index 0 (None) unused. */
   private pathVerts: Float32Array[];
 
+  // Attraction geometry — three colour passes: base platform, ride body, spire.
+  private attractionBaseVerts:  Float32Array = new Float32Array(0);
+  private attractionBodyVerts:  Float32Array = new Float32Array(0);
+  private attractionSpireVerts: Float32Array = new Float32Array(0);
+
   // Vertex counts written into the buffers on the last rebuild.
-  private borderVertexCount     = 0;
-  private fillVertexCount       = 0;
-  private cliffVertexCount      = 0;
-  private treeTrunkVertexCount  = 0;
-  private treeCanopyVertexCount = 0;
+  private borderVertexCount        = 0;
+  private fillVertexCount          = 0;
+  private cliffVertexCount         = 0;
+  private treeTrunkVertexCount     = 0;
+  private treeCanopyVertexCount    = 0;
   private pathVertexCounts: number[] = [];
+  private attractionBaseVertexCount  = 0;
+  private attractionBodyVertexCount  = 0;
+  private attractionSpireVertexCount = 0;
 
   // Grass texture, created lazily on the first render() call.
   private grassTexture: WebGLTexture | null = null;
@@ -339,6 +366,14 @@ export class IsoRenderer {
       new Float32Array(tileCount * PATH_FLOATS_PER_TILE),
     );
     this.pathVertexCounts = Object.keys(PATH_COLORS).map(() => 0);
+
+    // Attraction buffers — worst case: every 3×3 block is an attraction.
+    // Each attraction uses: base (9 diamonds × 18 floats = 162) +
+    //   body (1 diamond × 18 = 18) + spire (1 rect × 18 = 18) = 198 floats.
+    const maxAttractions = Math.ceil(tileCount / 9);
+    this.attractionBaseVerts  = new Float32Array(maxAttractions * 162);
+    this.attractionBodyVerts  = new Float32Array(maxAttractions *  18);
+    this.attractionSpireVerts = new Float32Array(maxAttractions *  18);
   }
 
   /**
@@ -413,6 +448,25 @@ export class IsoRenderer {
   }
 
   /**
+   * Show a multi-tile footprint preview centred at (col, row).
+   *
+   * @param valid  When true the highlight is green (placement allowed);
+   *               when false it is red (placement blocked).
+   */
+  setHoveredFootprint(col: number, row: number, size: number, valid: boolean): void {
+    this.hoverFootprintActive = true;
+    this.hoverFootprintCol    = col;
+    this.hoverFootprintRow    = row;
+    this.hoverFootprintSize   = size;
+    this.hoverFootprintValid  = valid;
+  }
+
+  /** Remove the footprint preview. */
+  clearHoveredFootprint(): void {
+    this.hoverFootprintActive = false;
+  }
+
+  /**
    * Render the entire world.
    *
    * Geometry is rebuilt only when `dirty` (world changed).
@@ -447,12 +501,39 @@ export class IsoRenderer {
     renderer.drawTriangles(this.treeTrunkVerts,  this.treeTrunkVertexCount,  TREE_TRUNK);
     renderer.drawTriangles(this.treeCanopyVerts, this.treeCanopyVertexCount, TREE_CANOPY);
 
-    // Hover highlight — drawn without depth test so it always sits on top.
+    // Attraction structures — drawn after trees so they appear in front.
+    if (this.attractionBaseVertexCount  > 0)
+      renderer.drawTriangles(this.attractionBaseVerts,  this.attractionBaseVertexCount,  CAROUSEL_BASE);
+    if (this.attractionBodyVertexCount  > 0)
+      renderer.drawTriangles(this.attractionBodyVerts,  this.attractionBodyVertexCount,  CAROUSEL_BODY);
+    if (this.attractionSpireVertexCount > 0)
+      renderer.drawTriangles(this.attractionSpireVerts, this.attractionSpireVertexCount, CAROUSEL_SPIRE);
+
+    // Single-tile hover highlight — drawn without depth test so it always sits on top.
     if (this.hoverCol >= 0) {
       const { sx, sy } = this.tileToScreen(this.hoverCol, this.hoverRow);
       const hcy = sy + HH - world.getHeight(this.hoverCol, this.hoverRow) * HEIGHT_STEP;
       writeFlatDiamond(this.hoverVerts, 0, sx, hcy, HW * INSET, HH * INSET);
       renderer.drawTrianglesFlat(this.hoverVerts, 6, HOVER_FILL);
+    }
+
+    // Multi-tile footprint preview (attraction placement).
+    if (this.hoverFootprintActive) {
+      const color = this.hoverFootprintValid ? FOOTPRINT_VALID : FOOTPRINT_INVALID;
+      const half  = Math.floor(this.hoverFootprintSize / 2);
+      let fi2 = 0, vcount = 0;
+      for (let dr = -half; dr <= half; dr++) {
+        for (let dc = -half; dc <= half; dc++) {
+          const tc = this.hoverFootprintCol + dc;
+          const tr = this.hoverFootprintRow + dr;
+          if (tc < 0 || tc >= this.worldCols || tr < 0 || tr >= this.worldRows) continue;
+          const { sx, sy } = this.tileToScreen(tc, tr);
+          const hcy = sy + HH - world.getHeight(tc, tr) * HEIGHT_STEP;
+          fi2 = writeFlatDiamond(this.hoverFootprintVerts, fi2, sx, hcy, HW * INSET, HH * INSET);
+          vcount += 6;
+        }
+      }
+      if (vcount > 0) renderer.drawTrianglesFlat(this.hoverFootprintVerts, vcount, color);
     }
   }
 
@@ -678,5 +759,63 @@ export class IsoRenderer {
     for (let pt = 1; pt < this.pathVerts.length; pt++) {
       this.pathVertexCounts[pt] = (pi[pt] ?? 0) / 3;
     }
+
+    // -----------------------------------------------------------------------
+    // Attraction geometry
+    // -----------------------------------------------------------------------
+
+    let ai  = 0; // attractionBaseVerts cursor
+    let abi = 0; // attractionBodyVerts cursor
+    let asi = 0; // attractionSpireVerts cursor
+
+    for (const attr of world.getAttractions()) {
+      const { col, row } = attr;
+      const { sx, sy } = this.tileToScreen(col, row);
+      const cx  = sx;
+      const cy  = sy + HH;
+      const h   = world.getHeight(col, row);
+      const acy = cy - h * HEIGHT_STEP;
+
+      // Depth: render in front of the frontmost tile of the 3×3 footprint.
+      const attrDepth  = (col + row + 3) / maxDepth;
+      const spireDepth = (col + row + 4) / maxDepth;
+
+      // --- Base platform: a flat diamond covering the whole 3×3 footprint ---
+      // The outer boundary of a 3×3 iso footprint centred at (col, row) is a
+      // diamond with half-widths 3×HW and 3×HH; scale it down slightly.
+      ai = writeDiamond(this.attractionBaseVerts, ai, cx, acy, HW * 2.8, HH * 2.8, attrDepth);
+
+      // --- Ride body: a raised diamond canopy above the centre ---
+      const canopyElevation = 28; // pixels above ground
+      const canopyHW        = HW * 1.1;
+      const canopyHH        = HH * 1.1;
+      abi = writeDiamond(
+        this.attractionBodyVerts, abi,
+        cx, acy - canopyElevation,
+        canopyHW, canopyHH,
+        attrDepth,
+      );
+
+      // --- Central pole ---
+      abi = writeRect(
+        this.attractionBodyVerts, abi,
+        cx - 2, acy - canopyElevation, 4, canopyElevation,
+        attrDepth,
+      );
+
+      // --- Spire: thin rect rising from the canopy peak ---
+      asi = writeRect(
+        this.attractionSpireVerts, asi,
+        cx - 2, acy - canopyElevation - 12, 4, 14,
+        spireDepth,
+      );
+
+      // Suppress unused-variable warning for attraction type (future variants).
+      void (attr.type === AttractionType.Carousel);
+    }
+
+    this.attractionBaseVertexCount  = ai  / 3;
+    this.attractionBodyVertexCount  = abi / 3;
+    this.attractionSpireVertexCount = asi / 3;
   }
 }

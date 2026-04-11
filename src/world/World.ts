@@ -1,5 +1,6 @@
 import { TileType } from './Tile';
 import { PathType } from './Path';
+import { type PlacedAttraction } from './Attraction';
 /** Fraction of tiles that start as trees. */
 const TREE_DENSITY = 0.2;
 
@@ -26,6 +27,7 @@ export class World {
   private tiles: Uint8Array;
   private heights: Int16Array;
   private paths: Uint8Array;
+  private readonly attractionList: PlacedAttraction[] = [];
 
   constructor(cols: number, rows: number) {
     this.cols = cols;
@@ -87,5 +89,13 @@ export class World {
   /** True if (col, row) carries any path surface. */
   hasPath(col: number, row: number): boolean {
     return this.paths[row * this.cols + col] !== PathType.None;
+  }
+
+  addAttraction(attraction: PlacedAttraction): void {
+    this.attractionList.push(attraction);
+  }
+
+  getAttractions(): readonly PlacedAttraction[] {
+    return this.attractionList;
   }
 }

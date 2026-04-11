@@ -6,9 +6,11 @@ import { InputManager } from '../input/InputManager';
 import { MouseManager } from '../input/MouseManager';
 import { HeightTool } from '../tools/HeightTool';
 import { PathTool } from '../tools/PathTool';
+import { AttractionTool } from '../tools/AttractionTool';
 import { PathType } from '../world/Path';
+import { AttractionType } from '../world/Attraction';
 import { Toolbar } from '../ui/Toolbar';
-import { drawZoomIn, drawZoomOut } from '../ui/icons';
+import { drawZoomIn, drawZoomOut, drawCarousel } from '../ui/icons';
 
 // 128×128 matches a real RCT1 scenario map.  At 64×32 px per tile the grid
 // spans ~8 192 × 4 096 px — well beyond the 1280×720 viewport in every
@@ -41,11 +43,14 @@ export class Game {
   private rafId:    number = 0;
   private lastTime: number = 0;
 
-  private mouseManager: MouseManager;
-  private heightTool:   HeightTool;
-  private pathTool:     PathTool;
+  private mouseManager:   MouseManager;
+  private heightTool:     HeightTool;
+  private pathTool:       PathTool;
+  private attractionTool!: AttractionTool;
   /** Tile coord exposed by whichever tool is currently active. */
   private hoveredTileRef: { hoveredTile: { col: number; row: number } | null };
+  /** Whether the attraction tool is currently selected (uses footprint hover instead of single-tile). */
+  private attractionToolActive = false;
 
   private toolbar: Toolbar;
 
@@ -73,8 +78,9 @@ export class Game {
 
     const onWorldChange = () => this.isoRenderer.invalidate();
 
-    this.heightTool = new HeightTool(this.world, onWorldChange);
-    this.pathTool   = new PathTool(this.world, PathType.Concrete, onWorldChange);
+    this.heightTool     = new HeightTool(this.world, onWorldChange);
+    this.pathTool       = new PathTool(this.world, PathType.Concrete, onWorldChange);
+    this.attractionTool = new AttractionTool(this.world, AttractionType.Carousel, onWorldChange);
 
     // Toolbar — must be created before MouseManager so its listeners are
     // registered first (button presses also call e.stopPropagation()).
@@ -88,6 +94,11 @@ export class Game {
       drawIcon: (r, x, y, size) => drawZoomOut(r, x, y, size),
       onClick:  () => this.camera.zoomOut(),
       tooltip:  'Zoom out',
+    });
+    this.toolbar.addButton({
+      drawIcon: (r, x, y, size) => drawCarousel(r, x, y, size),
+      onClick:  () => this.selectAttractionTool(),
+      tooltip:  'Place carousel (3)',
     });
 
     this.mouseManager = new MouseManager(
@@ -128,14 +139,19 @@ export class Game {
   }
 
   private update(dt: number): void {
-    // Tool selection (1 = height, 2 = concrete path)
+    // Tool selection (1 = height, 2 = concrete path, 3 = attraction)
     if (this.input.wasPressed('selectHeight')) {
       this.mouseManager.setTool(this.heightTool);
-      this.hoveredTileRef = this.heightTool;
+      this.hoveredTileRef      = this.heightTool;
+      this.attractionToolActive = false;
     }
     if (this.input.wasPressed('selectPath')) {
       this.mouseManager.setTool(this.pathTool);
-      this.hoveredTileRef = this.pathTool;
+      this.hoveredTileRef      = this.pathTool;
+      this.attractionToolActive = false;
+    }
+    if (this.input.wasPressed('selectAttraction')) {
+      this.selectAttractionTool();
     }
 
     // Zoom (one-shot via wasPressed)
@@ -152,13 +168,27 @@ export class Game {
     if (dx !== 0 || dy !== 0) this.camera.pan(dx, dy);
   }
 
+  private selectAttractionTool(): void {
+    this.mouseManager.setTool(this.attractionTool);
+    this.hoveredTileRef      = this.attractionTool;
+    this.attractionToolActive = true;
+  }
+
   private render(): void {
     this.renderer.clear(SKY);
 
     // Sync hover highlight from the active tool.
-    const hov = this.hoveredTileRef.hoveredTile;
-    if (hov) this.isoRenderer.setHoveredTile(hov.col, hov.row);
-    else      this.isoRenderer.clearHoveredTile();
+    if (this.attractionToolActive) {
+      const fp = this.attractionTool.footprintHighlight;
+      if (fp) this.isoRenderer.setHoveredFootprint(fp.col, fp.row, fp.size, fp.valid);
+      else     this.isoRenderer.clearHoveredFootprint();
+      this.isoRenderer.clearHoveredTile();
+    } else {
+      const hov = this.hoveredTileRef.hoveredTile;
+      if (hov) this.isoRenderer.setHoveredTile(hov.col, hov.row);
+      else      this.isoRenderer.clearHoveredTile();
+      this.isoRenderer.clearHoveredFootprint();
+    }
 
     // Apply camera transform — offset then zoom — before the world draw.
     // Reset both to identity afterwards so future UI draws are unaffected.
