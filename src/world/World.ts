@@ -1,6 +1,6 @@
 import { TileType } from './Tile';
 import { PathType } from './Path';
-import { type PlacedAttraction } from './Attraction';
+import { type PlacedAttraction, ATTRACTION_DEFS } from './Attraction';
 /** Fraction of tiles that start as trees. */
 const TREE_DENSITY = 0.2;
 
@@ -74,8 +74,19 @@ export class World {
     return this.paths[row * this.cols + col] as PathType;
   }
 
-  /** Place or remove a path on (col, row).  Placing a path clears any tree on that tile. */
+  /** True if (col, row) is occupied by any placed attraction's footprint. */
+  hasAttractionAt(col: number, row: number): boolean {
+    for (const attr of this.attractionList) {
+      const half = Math.floor(ATTRACTION_DEFS[attr.type].size / 2);
+      if (Math.abs(col - attr.col) <= half && Math.abs(row - attr.row) <= half) return true;
+    }
+    return false;
+  }
+
+  /** Place or remove a path on (col, row).  Placing a path clears any tree on that tile.
+   *  No-ops silently when the tile is occupied by an attraction. */
   setPath(col: number, row: number, type: PathType): void {
+    if (type !== PathType.None && this.hasAttractionAt(col, row)) return;
     this.paths[row * this.cols + col] = type;
     if (type !== PathType.None) {
       const idx = row * this.cols + col;
