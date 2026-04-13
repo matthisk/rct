@@ -9,6 +9,7 @@ import { PathTool } from '../tools/PathTool';
 import { AttractionTool } from '../tools/AttractionTool';
 import { PathType } from '../world/Path';
 import { AttractionType } from '../world/Attraction';
+import { UIManager } from '../ui/UIManager';
 import { Toolbar } from '../ui/Toolbar';
 import { drawZoomIn, drawZoomOut, drawCarousel } from '../ui/icons';
 
@@ -31,7 +32,7 @@ const SKY: [number, number, number, number] = [0.53, 0.81, 0.98, 1.0];
  * Main game class.
  *
  * Owns the game loop (requestAnimationFrame) and wires together the
- * simulation state, input, camera, and renderer.
+ * simulation state, input, camera, renderer, and UI.
  */
 export class Game {
   private renderer:    Renderer;
@@ -39,20 +40,19 @@ export class Game {
   private world:       World;
   private camera:      Camera;
   private input:       InputManager;
+  private uiManager:   UIManager;
 
   private rafId:    number = 0;
   private lastTime: number = 0;
 
-  private mouseManager:   MouseManager;
-  private heightTool:     HeightTool;
-  private pathTool:       PathTool;
+  private mouseManager:    MouseManager;
+  private heightTool:      HeightTool;
+  private pathTool:        PathTool;
   private attractionTool!: AttractionTool;
   /** Tile coord exposed by whichever tool is currently active. */
   private hoveredTileRef: { hoveredTile: { col: number; row: number } | null };
   /** Whether the attraction tool is currently selected (uses footprint hover instead of single-tile). */
   private attractionToolActive = false;
-
-  private toolbar: Toolbar;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -82,31 +82,34 @@ export class Game {
     this.pathTool       = new PathTool(this.world, PathType.Concrete, onWorldChange);
     this.attractionTool = new AttractionTool(this.world, AttractionType.Carousel, onWorldChange);
 
-    // Toolbar — must be created before MouseManager so its listeners are
-    // registered first (button presses also call e.stopPropagation()).
-    this.toolbar = new Toolbar(canvas);
-    this.toolbar.addButton({
+    // Build the UI tree.
+    this.uiManager = new UIManager();
+
+    const toolbar = new Toolbar(this.renderer.width);
+    toolbar.addButton({
       drawIcon: (r, x, y, size) => drawZoomIn(r, x, y, size),
       onClick:  () => this.camera.zoomIn(),
       tooltip:  'Zoom in',
     });
-    this.toolbar.addButton({
+    toolbar.addButton({
       drawIcon: (r, x, y, size) => drawZoomOut(r, x, y, size),
       onClick:  () => this.camera.zoomOut(),
       tooltip:  'Zoom out',
     });
-    this.toolbar.addButton({
+    toolbar.addButton({
       drawIcon: (r, x, y, size) => drawCarousel(r, x, y, size),
       onClick:  () => this.selectAttractionTool(),
       tooltip:  'Place carousel (3)',
     });
+    this.uiManager.addRoot(toolbar);
 
     this.mouseManager = new MouseManager(
       canvas,
       (x, y) => this.isoRenderer.canvasToTile(x, y, this.camera.x, this.camera.y, this.camera.zoom),
       () => this.camera.zoom,
-      (x, y) => this.toolbar.isHit(x, y),
+      this.uiManager,
     );
+
     // Default tool: height editing.
     this.hoveredTileRef = this.heightTool;
     this.mouseManager.setTool(this.heightTool);
@@ -120,7 +123,6 @@ export class Game {
     cancelAnimationFrame(this.rafId);
     this.input.destroy();
     this.mouseManager.destroy();
-    this.toolbar.destroy();
   }
 
   // -------------------------------------------------------------------------
@@ -191,14 +193,14 @@ export class Game {
     }
 
     // Apply camera transform — offset then zoom — before the world draw.
-    // Reset both to identity afterwards so future UI draws are unaffected.
+    // Reset both to identity afterwards so UI draws are unaffected.
     this.renderer.setOffset(this.camera.x, this.camera.y);
     this.renderer.setZoom(this.camera.zoom);
     this.isoRenderer.render(this.world, this.renderer);
     this.renderer.setOffset(0, 0);
     this.renderer.setZoom(1.0);
 
-    // Toolbar is drawn last so it always appears on top of the world view.
-    this.toolbar.render(this.renderer);
+    // UI is drawn last (always on top of the world view), z-ordered by UIManager.
+    this.uiManager.render(this.renderer);
   }
 }

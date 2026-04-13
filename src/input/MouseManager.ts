@@ -1,16 +1,21 @@
 import type { MouseTool, TileCoord, ToolContext } from './MouseTool';
+import type { UIManager } from '../ui/UIManager';
 
 /**
  * Translates raw DOM mouse events on the canvas into `ToolContext` objects
  * and dispatches them to the active `MouseTool`.
  *
- * Also manages the canvas CSS cursor so each tool can declare its own.
+ * Event routing order:
+ *   1. The UIManager is offered the event first.
+ *      - If it returns true (a UI node consumed the event), world-tool
+ *        move/down events are suppressed.
+ *   2. Otherwise the active world tool receives the event.
  *
- * Usage:
- *   const manager = new MouseManager(canvas, tileFromCanvas, getZoom);
- *   manager.setTool(myTool);   // swap tools at any time
- *   // …later…
- *   manager.destroy();
+ * mouseup is always forwarded to both the UIManager (to release button
+ * captures) and the active world tool (so drag operations can clean up even
+ * when the pointer is released over a UI element).
+ *
+ * mouseleave is forwarded to both so all press/hover states are cleared.
  */
 export class MouseManager {
   private tool: MouseTool | null = null;
@@ -21,16 +26,8 @@ export class MouseManager {
     private readonly tileFromCanvas: (x: number, y: number) => TileCoord | null,
     /** Returns the current camera zoom (used to populate ToolContext.zoom). */
     private readonly getZoom: () => number,
-    /**
-     * Optional guard predicate.  When it returns true for a canvas-pixel
-     * position, mouse events at that position are NOT forwarded to the active
-     * tool.  Use this to prevent the world tools from responding to clicks
-     * that land on UI elements such as the toolbar.
-     *
-     * mouseup is always forwarded (so drag operations can be cleanly
-     * terminated even when the pointer is released over a UI element).
-     */
-    private readonly guard?: (x: number, y: number) => boolean,
+    /** UI manager — receives events before the active world tool. */
+    private readonly uiManager: UIManager,
   ) {
     canvas.addEventListener('mousemove',  this.handleMove);
     canvas.addEventListener('mousedown',  this.handleDown);
@@ -55,35 +52,44 @@ export class MouseManager {
   }
 
   // -------------------------------------------------------------------------
-  // Private
-  // -------------------------------------------------------------------------
 
-  private buildContext(e: MouseEvent): ToolContext {
+  private canvasPos(e: MouseEvent): { x: number; y: number } {
     const rect = this.canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  private buildContext(x: number, y: number): ToolContext {
     return { canvasX: x, canvasY: y, tile: this.tileFromCanvas(x, y), zoom: this.getZoom() };
   }
 
-  private isGuarded(e: MouseEvent): boolean {
-    if (!this.guard) return false;
-    const rect = this.canvas.getBoundingClientRect();
-    return this.guard(e.clientX - rect.left, e.clientY - rect.top);
-  }
-
-  private readonly handleMove = (e: MouseEvent) => {
-    if (this.isGuarded(e)) { this.tool?.onLeave?.(); return; }
-    this.tool?.onMove?.(this.buildContext(e));
+  private readonly handleMove = (e: MouseEvent): void => {
+    const { x, y } = this.canvasPos(e);
+    if (this.uiManager.dispatchMove(x, y)) {
+      // Pointer is over UI — retire the world tool's hover state.
+      this.tool?.onLeave?.();
+    } else {
+      this.tool?.onMove?.(this.buildContext(x, y));
+    }
   };
 
-  private readonly handleDown = (e: MouseEvent) => {
+  private readonly handleDown = (e: MouseEvent): void => {
     e.preventDefault(); // prevent text-selection drag
-    if (this.isGuarded(e)) return;
-    this.tool?.onDown?.(this.buildContext(e));
+    const { x, y } = this.canvasPos(e);
+    if (!this.uiManager.dispatchDown(x, y)) {
+      this.tool?.onDown?.(this.buildContext(x, y));
+    }
   };
 
-  // mouseup is always dispatched (not guarded) so drag operations terminate
-  // cleanly even when the pointer is released over a UI element.
-  private readonly handleUp    = (e: MouseEvent) => this.tool?.onUp?.(this.buildContext(e));
-  private readonly handleLeave = () => this.tool?.onLeave?.();
+  private readonly handleUp = (e: MouseEvent): void => {
+    const { x, y } = this.canvasPos(e);
+    // UI gets the up first (releases capture / fires button click if applicable).
+    this.uiManager.dispatchUp(x, y);
+    // World tool always receives up so drag operations terminate cleanly.
+    this.tool?.onUp?.(this.buildContext(x, y));
+  };
+
+  private readonly handleLeave = (): void => {
+    this.uiManager.dispatchLeave();
+    this.tool?.onLeave?.();
+  };
 }
