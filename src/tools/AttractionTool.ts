@@ -81,6 +81,17 @@ export class AttractionTool implements MouseTool {
         else if (h !== refHeight) return false;
       }
     }
+    // Reject if any footprint tile overlaps an existing attraction.
+    for (const existing of this.world.getAttractions()) {
+      const existingHalf = Math.floor(ATTRACTION_DEFS[existing.type].size / 2);
+      for (let dr = -half; dr <= half; dr++) {
+        for (let dc = -half; dc <= half; dc++) {
+          const tc = centerCol + dc, tr = centerRow + dr;
+          if (Math.abs(tc - existing.col) <= existingHalf &&
+              Math.abs(tr - existing.row) <= existingHalf) return false;
+        }
+      }
+    }
     return true;
   }
 }
